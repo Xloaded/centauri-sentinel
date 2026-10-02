@@ -1,13 +1,17 @@
 """Elegoo Centauri Carbon 2 printer client over MQTT.
 
-Protocol notes (from spike, docs/verified-assumptions.md):
+Protocol notes:
 - Broker: printer_ip:1883, username "elegoo", password = printer_access_code
-- Status topic:  elegoo/<serial>/api_status  (subscribe)
-- Request topic: elegoo/<serial>/<client_id>/api_request  (publish)
-- Method 6000 = periodic status push (contains all state needed)
+- Status topic: elegoo/<serial>/api_status
+- Request topic: elegoo/<serial>/<client_id>/api_request
+- Firmware 1.x provides print state through method 6000 status pushes.
+- Firmware 02.x may omit print-state fields from those pushes, so the client
+  keeps a persistent registered MQTT session and periodically requests
+  GET_STATUS (1002).
+- GET_FILE_DETAIL (1046) provides active-file metadata such as material,
+  filament usage, file size, and total layer count.
 
-The client subscribes and waits for the next status push rather than
-issuing a dedicated request, because the printer pushes status ~1 Hz.
+Both the earlier status-push behaviour and firmware 02.x are supported.
 """
 
 from __future__ import annotations
