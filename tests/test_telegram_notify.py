@@ -505,3 +505,21 @@ async def test_print_progress_milestone_sends_silent_new_card() -> None:
     )
     assert notifier._progress_message_id == 456
     assert notifier._progress_milestone == 25
+
+
+async def test_print_progress_one_percent_creates_first_status_card() -> None:
+    notifier, mock_bot = _make_notifier_enabled()
+
+    message = MagicMock()
+    message.message_id = 123
+    mock_bot.send_photo.return_value = message
+
+    await notifier.send_print_progress(
+        _progress_status(1.0),
+        jpeg=b"jpeg-1",
+        caption="status 1%",
+    )
+
+    mock_bot.send_photo.assert_awaited_once()
+    assert notifier._progress_message_id == 123
+    assert notifier._progress_milestone == 1

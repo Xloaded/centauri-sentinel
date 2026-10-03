@@ -294,7 +294,7 @@ class TelegramNotifier:
         progress = max(0.0, min(100.0, float(status.progress or 0.0)))
 
         milestone = 0
-        for threshold in (75, 50, 25):
+        for threshold in (75, 50, 25, 1):
             if progress >= threshold:
                 milestone = threshold
                 break

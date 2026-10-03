@@ -1512,6 +1512,15 @@ function updateLiveStats() {
         }
         progressBar.style.width = `${progress}%`;
         progressPercent.textContent = `${progress.toFixed(1)}%`;
+
+        // Keep the browser tab useful while a print is active.
+        const state = (data.print_state || "").toLowerCase();
+        if (state === "printing" || state === "paused") {
+          const label = state === "paused" ? "Paused" : "Printing";
+          document.title = `${Math.round(progress)}% ${label} · Centauri Sentinel`;
+        } else {
+          document.title = "Centauri Sentinel";
+        }
       }
 
       // Update Layer

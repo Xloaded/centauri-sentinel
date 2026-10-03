@@ -34,7 +34,9 @@ In addition to the original Sentinel functionality, this fork adds:
 - **Firmware 02.x support** for the Elegoo Centauri Carbon 2.
 - **Telegram live print status** with a current camera snapshot.
 - **Automatic progress updates** approximately every 5 minutes without filling the chat with new notifications.
-- **Silent milestone refreshes** at 25%, 50%, and 75% progress.
+- **Silent milestone refreshes** at 1%, 25%, 50%, and 75% progress, giving an early live status card shortly after printing begins.
+- **Live browser-tab progress** while printing or paused, for example `9% Printing · Centauri Sentinel`.
+- **Remote printer controls** from the web dashboard, including Pause, Resume, Stop, and watcher Snooze.
 - **Detailed /status** with percentage, layer, filename, ETA, temperatures, watcher state and detection state.
 - **Native printer error alerts** from firmware 02.x machine_status.exception_status.
 - **Active printer errors in /status**.
@@ -89,7 +91,7 @@ When the print finishes, Sentinel sends the completed filename, total print time
 
 ### Telegram chat preview
 
-Progress milestone updates are sent silently so the latest print percentage and snapshot remain visible directly in the Telegram chat list.
+Progress milestone updates at 1%, 25%, 50%, and 75% are sent silently so the latest print percentage and snapshot remain visible directly in the Telegram chat list.
 
 ![Telegram chat preview](docs/images/telegram-chat-preview.png)
 

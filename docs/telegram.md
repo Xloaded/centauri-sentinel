@@ -40,7 +40,7 @@ While printing, Sentinel maintains a Telegram status card containing the latest 
 
 ![Telegram live print progress](images/telegram-progress.png)
 
-The status card is updated approximately every five minutes. At 25%, 50% and 75%, Sentinel refreshes the card silently so the latest progress is also visible in the Telegram chat preview without generating another notification.
+The status card is updated approximately every five minutes. At 1%, 25%, 50% and 75%, Sentinel refreshes the card silently so the latest progress is also visible in the Telegram chat preview without generating another notification. The 1% milestone provides an early status card shortly after the print begins.
 
 ![Telegram chat preview](images/telegram-chat-preview.png)
 
