@@ -1423,3 +1423,52 @@ def test_command_ack_timeout_matches_reference_implementation() -> None:
     from sentinel.printer.client import _COMMAND_ACK_TIMEOUT_S
 
     assert _COMMAND_ACK_TIMEOUT_S == 10.0
+
+
+def test_parse_status_carbon2_exception_status() -> None:
+    payload = _modern_payload(
+        "idle",
+        extra_result={"machine_status": {
+            "progress": 0.0,
+            "exception_status": [1242],
+        }},
+    )
+    status = _parse_status(payload)
+    assert status.exception_codes == [1242]
+
+
+def test_parse_status_carbon2_multiple_exceptions() -> None:
+    payload = _modern_payload(
+        "idle",
+        extra_result={"machine_status": {
+            "progress": 0.0,
+            "exception_status": [1242, 1211],
+        }},
+    )
+    status = _parse_status(payload)
+    assert status.exception_codes == [1242, 1211]
+
+
+def test_parse_status_carbon2_exception_status_cleared() -> None:
+    payload = _modern_payload(
+        "idle",
+        extra_result={"machine_status": {
+            "progress": 0.0,
+            "exception_status": [],
+        }},
+    )
+    status = _parse_status(payload)
+    assert status.exception_codes == []
+
+
+def test_parse_status_carbon2_invalid_exception_code(caplog) -> None:
+    payload = _modern_payload(
+        "idle",
+        extra_result={"machine_status": {
+            "progress": 0.0,
+            "exception_status": [1242, "bad"],
+        }},
+    )
+    status = _parse_status(payload)
+    assert status.exception_codes == [1242]
+    assert "Ignoring invalid printer exception code" in caplog.text

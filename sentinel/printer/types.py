@@ -45,6 +45,10 @@ class PrinterStatus:
     # Camera connectivity as reported by the printer
     camera_connected: bool = False
 
+    # Active CC2 printer exception codes from machine_status.exception_status.
+    # An empty list means there are currently no reported exceptions.
+    exception_codes: list[int] = field(default_factory=list)
+
     # Base64-encoded thumbnail PNG image from G-code metadata
     thumbnail_base64: str | None = None
 

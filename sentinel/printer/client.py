@@ -240,6 +240,18 @@ def _parse_status(
         )
         bed_target = float(heater_bed["target"]) if heater_bed.get("target") is not None else None
         progress = float(machine_status.get("progress", 0.0))
+
+        raw_exception_codes = machine_status.get("exception_status", [])
+        if not isinstance(raw_exception_codes, list):
+            raw_exception_codes = []
+
+        exception_codes = []
+        for code in raw_exception_codes:
+            try:
+                exception_codes.append(int(code))
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid printer exception code: %r", code)
+
         remaining_seconds = float(print_status.get("remaining_time_sec", 0.0))
         camera_connected = bool(external_device.get("camera", False))
 
@@ -296,6 +308,7 @@ def _parse_status(
             remaining_seconds=remaining_seconds,
             print_state=print_state,
             camera_connected=camera_connected,
+            exception_codes=exception_codes,
             thumbnail_base64=thumbnail_base64,
             filament_used_g=filament_used_g,
             material=material,
