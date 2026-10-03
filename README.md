@@ -71,6 +71,12 @@ Live Centauri Carbon 2 status, camera view, temperatures, print progress and ML 
 
 ![Centauri Sentinel dashboard](docs/images/sentinel-dashboard.png)
 
+### Live browser-tab progress
+
+While a print is active, the browser tab shows the printer-reported progress and current state, making it easy to monitor the printer without keeping the dashboard visible.
+
+![Live browser-tab print progress](docs/images/browser-tab-progress.png)
+
 ### Telegram live print progress
 
 A live camera snapshot together with print percentage, layer, ETA, temperatures and detection status.
