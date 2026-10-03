@@ -66,7 +66,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ghcr.io/legalmarc/centauri-sentinel:latest
+    image: xloaded/centauri-sentinel:local
     restart: unless-stopped
     depends_on:
       obico-ml:
@@ -92,7 +92,7 @@ services:
       AUTO_STOP_TIMEOUT_SECONDS: ${AUTO_STOP_TIMEOUT_SECONDS:-0}
       RESUME_COOLDOWN_SECONDS: ${RESUME_COOLDOWN_SECONDS:-5}
       # --- Notifications ---
-      NOTIFY_ON_PRINT_START: ${NOTIFY_ON_PRINT_START:-false}
+      NOTIFY_ON_PRINT_START: ${NOTIFY_ON_PRINT_START:-true}
       NOTIFY_ON_PRINT_COMPLETED: ${NOTIFY_ON_PRINT_COMPLETED:-true}
       NOTIFY_ON_PRINT_PAUSED: ${NOTIFY_ON_PRINT_PAUSED:-true}
       # --- Telegram (optional) ---

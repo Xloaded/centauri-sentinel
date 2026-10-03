@@ -122,7 +122,7 @@ class Settings(BaseSettings):
     resume_cooldown_seconds: int = 5
 
     # Notifications
-    notify_on_print_start: bool = False
+    notify_on_print_start: bool = True
     notify_on_print_completed: bool = True
     notify_on_print_paused: bool = True
 

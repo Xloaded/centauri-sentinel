@@ -1,5 +1,13 @@
 # centauri-sentinel
 
+> **Xloaded community fork**
+>
+> Enhanced Elegoo Centauri Carbon 2 support with firmware 02.x compatibility,
+> Telegram live print progress, photo status cards, and native printer error alerts.
+>
+> Based on the original [LegalMarc/centauri-sentinel](https://github.com/LegalMarc/centauri-sentinel).
+> Original authorship and licensing are preserved.
+
 Self-hosted failure detection and remote control for the **Elegoo Centauri Carbon 2** FDM printer.
 Watches the camera feed with the [Obico](https://github.com/TheSpaghettiDetective/obico-server) ML model,
 pauses the printer on confirmed spaghetti, and alerts via Telegram and/or ntfy.
@@ -14,6 +22,75 @@ consecutive frames all exceed the confidence threshold, it pauses the print, sen
 with a snapshot, and waits for your decision. A Telegram bot lets you resume or abort the print
 from your phone. A local web dashboard shows live camera feed, watcher state, and detection
 history.
+
+---
+
+## Xloaded fork additions
+
+In addition to the original Sentinel functionality, this fork adds:
+
+- **Firmware 02.x support** for the Elegoo Centauri Carbon 2.
+- **Telegram live print status** with a current camera snapshot.
+- **Automatic progress updates** approximately every 5 minutes without filling the chat with new notifications.
+- **Silent milestone refreshes** at 25%, 50%, and 75% progress.
+- **Detailed /status** with percentage, layer, filename, ETA, temperatures, watcher state and detection state.
+- **Native printer error alerts** from firmware 02.x machine_status.exception_status.
+- **Active printer errors in /status**.
+- **Error deduplication** so an active fault alerts once, but can alert again after it clears and reoccurs.
+- **Improved firmware 02.x print-start handling** so Telegram waits for the real filename instead of showing Unknown file.
+- **Centauri Carbon 2 / Canvas error descriptions**, including filament feed, retract, cutter, blockage and tangling faults.
+
+Example progress:
+
+    📊 40.0%
+    ████████░░░░░░░░░░░░
+    📐 Layer 54 / 235
+    🖨 Printer: Printing
+    ⏱ Remaining: 1h 21m
+    🎯 ETA: 10:50
+    🌡 Extruder: 220°C
+    🌡 Bed: 60°C
+
+Example printer error:
+
+    ⚠️ Printer Error
+    ⚠️ Canvas: Filament Tangling (1263)
+
+Screenshots will be added after privacy review.
+
+---
+
+## Screenshots
+
+### Sentinel dashboard
+
+Live Centauri Carbon 2 status, camera view, temperatures, print progress and ML monitoring.
+
+![Centauri Sentinel dashboard](docs/images/sentinel-dashboard.png)
+
+### Telegram live print progress
+
+A live camera snapshot together with print percentage, layer, ETA, temperatures and detection status.
+
+![Telegram live print progress](docs/images/telegram-progress.png)
+
+### Print started notification
+
+Sentinel sends a camera snapshot and the actual print filename when a print starts.
+
+![Telegram print started](docs/images/telegram-print-started.png)
+
+### Print completed notification
+
+When the print finishes, Sentinel sends the completed filename, total print time and final camera snapshot.
+
+![Telegram print completed](docs/images/telegram-print-completed.png)
+
+### Telegram chat preview
+
+Progress milestone updates are sent silently so the latest print percentage and snapshot remain visible directly in the Telegram chat list.
+
+![Telegram chat preview](docs/images/telegram-chat-preview.png)
 
 ---
 
@@ -58,7 +135,7 @@ centauri-sentinel runs as a three-service Docker Compose stack (`token-init`,
 ### Quick start (Docker)
 
 ```sh
-git clone https://github.com/LegalMarc/centauri-sentinel.git
+git clone https://github.com/Xloaded/centauri-sentinel.git
 cd centauri-sentinel
 cp .env.example .env
 # edit .env: set PRINTER_IP and PRINTER_ACCESS_CODE
@@ -132,7 +209,7 @@ Only `PRINTER_IP` is required. Everything else has a sane default.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `NOTIFY_ON_PRINT_START` | `false` | Send a notification when a print job starts |
+| `NOTIFY_ON_PRINT_START` | `true` | Send a notification when a print job starts |
 | `NOTIFY_ON_PRINT_COMPLETED` | `true` | Send a notification when a print job completes |
 | `NOTIFY_ON_PRINT_PAUSED` | `true` | Send a notification when a print is paused by Sentinel |
 

@@ -16,7 +16,7 @@ Coolify instead, see [coolify-deploy.md](coolify-deploy.md).
 ## 1. Clone the repository
 
 ```sh
-git clone https://github.com/LegalMarc/centauri-sentinel.git
+git clone https://github.com/Xloaded/centauri-sentinel.git
 cd centauri-sentinel
 ```
 
