@@ -1,4 +1,4 @@
-# centauri-sentinel
+# Centauri Sentinel for Elegoo Centauri Carbon 2
 
 > **Xloaded community fork**
 >
@@ -8,9 +8,11 @@
 > Based on the original [LegalMarc/centauri-sentinel](https://github.com/LegalMarc/centauri-sentinel).
 > Original authorship and licensing are preserved.
 
-Self-hosted failure detection and remote control for the **Elegoo Centauri Carbon 2** FDM printer.
-Watches the camera feed with the [Obico](https://github.com/TheSpaghettiDetective/obico-server) ML model,
-pauses the printer on confirmed spaghetti, and alerts via Telegram and/or ntfy.
+**Centauri Sentinel** is a self-hosted monitoring, failure-detection and notification system for the **ELEGOO Centauri Carbon 2 (CC2)** 3D printer.
+
+This community fork adds **firmware 02.x support**, **Telegram live print progress**, camera snapshots, native printer error alerts, and remote printer monitoring while preserving the original Centauri Sentinel functionality.
+
+It watches the camera feed with the [Obico](https://github.com/TheSpaghettiDetective/obico-server) ML model, pauses the printer on confirmed print failures, and alerts via Telegram and/or ntfy.
 
 ---
 
@@ -56,7 +58,6 @@ Example printer error:
     ⚠️ Printer Error
     ⚠️ Canvas: Filament Tangling (1263)
 
-Screenshots will be added after privacy review.
 
 ---
 
@@ -171,7 +172,7 @@ The dashboard is at the URL Coolify assigns (e.g. `https://<uuid>.your-domain.co
 
 ## Configuration reference
 
-Only `PRINTER_IP` is required. Everything else has a sane default.
+`PRINTER_IP` and `AUTH_USERNAME` are required by the Docker Compose deployment. Dashboard authentication also requires a password hash.
 
 ### Printer
 
@@ -238,15 +239,15 @@ Disabled if `NTFY_URL` is unset.
 
 See [ntfy setup](#ntfy-setup) below.
 
-### Dashboard auth (optional)
+### Dashboard authentication
 
-Disabled if `AUTH_USERNAME` is unset. When enabled, the dashboard presents an
+Dashboard authentication is required by the Docker Compose deployment. The dashboard presents an
 HTML login form (password-manager friendly); non-browser clients may still use
 HTTP Basic Auth.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AUTH_USERNAME` | — | Login username |
+| `AUTH_USERNAME` | **required** | Dashboard login username |
 | `AUTH_PASSWORD_BCRYPT_FILE` | — | **Preferred.** Path to a file containing the bcrypt hash. No `$`-escaping, and the hash stays out of `docker inspect`. Takes precedence over `AUTH_PASSWORD_BCRYPT` |
 | `AUTH_PASSWORD_BCRYPT` | — | bcrypt hash inline (required when `AUTH_USERNAME` is set and no file is given). **In a `.env` file you must escape every `$` as `$$`** |
 | `AUTH_COOKIE_SECURE` | `auto` | Session cookie `Secure` flag: `auto` (set when HTTPS detected), `always`, or `never` |
@@ -298,6 +299,8 @@ python -m sentinel hash-password
 ---
 
 ## Telegram setup
+
+For live progress cards, snapshots, print lifecycle notifications and printer error alerts, see the **[Telegram integration guide](docs/telegram.md)**.
 
 1. Open [@BotFather](https://t.me/BotFather) on Telegram and send `/newbot`. Follow the prompts.
    Copy the **bot token** — this is `TELEGRAM_BOT_TOKEN`.
