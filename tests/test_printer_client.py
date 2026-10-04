@@ -1354,6 +1354,48 @@ async def test_listen_loop_clears_stale_fields_on_active_to_idle_transition() ->
     assert status.thumbnail_base64 is None
 
 
+async def test_listen_loop_latches_brief_fw2_completion_push() -> None:
+    """A brief FW02 completion push must survive a following idle push."""
+    client = PrinterClient(_SETTINGS)
+
+    printing_push = _modern_payload(
+        "printing",
+        filename="job_a.gcode",
+        extra_result={"machine_status": {"sub_status": 2075, "progress": 99}},
+    )
+    completed_push = _modern_payload(
+        "printing",
+        filename="job_a.gcode",
+        extra_result={"machine_status": {"sub_status": 2077, "progress": 99}},
+    )
+    idle_push = _modern_payload(
+        "idle",
+        extra_result={"machine_status": {"sub_status": 0, "progress": 0}},
+    )
+
+    cm, _ = _make_fw2_mqtt_cm([printing_push, completed_push, idle_push])
+
+    with (
+        patch("sentinel.printer.client.aiomqtt.Client", return_value=cm),
+        patch("sentinel.printer.client.asyncio.sleep", side_effect=asyncio.CancelledError),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await client._listen_loop()
+
+    assert _parse_status(client._accumulated_data).print_state == "idle"
+
+    with patch.object(
+        client,
+        "_fetch_status",
+        return_value=_parse_status(client._accumulated_data),
+    ):
+        status = await client.status()
+
+    assert status.print_state == "completed"
+    assert status.progress == 99
+    assert status.filename == "job_a.gcode"
+
+
 async def test_listen_loop_keeps_fields_on_paused_transition() -> None:
     """printing -> paused is still 'active'; fields must not be cleared."""
     client = PrinterClient(_SETTINGS)
@@ -1472,3 +1514,65 @@ def test_parse_status_carbon2_invalid_exception_code(caplog) -> None:
     status = _parse_status(payload)
     assert status.exception_codes == [1242]
     assert "Ignoring invalid printer exception code" in caplog.text
+
+
+def test_parse_status_carbon2_print_complete_sub_status() -> None:
+    """Carbon 2 sub_status 2077 is the authoritative print-complete signal."""
+    payload = {
+        "method": 1002,
+        "result": {
+            "print_status": {
+                "state": "printing",
+                "filename": "benchy.gcode",
+            },
+            "machine_status": {
+                "sub_status": 2077,
+                "progress": 99,
+            },
+        },
+    }
+
+    status = _parse_status(payload)
+
+    assert status.print_state == "completed"
+    assert status.printing is False
+    assert status.progress == 99
+
+
+async def test_completed_state_survives_next_idle_status() -> None:
+    """A brief CC2 completion state must survive until status() consumes it."""
+    client = PrinterClient(_SETTINGS)
+
+    client._terminal_status = _parse_status(
+        {
+            "method": 1002,
+            "result": {
+                "print_status": {
+                    "state": "complete",
+                    "filename": "benchy.gcode",
+                },
+                "machine_status": {
+                    "sub_status": 2075,
+                    "progress": 99,
+                },
+            },
+        }
+    )
+
+    idle = _parse_status(
+        {
+            "method": 1002,
+            "result": {
+                "print_status": {"state": ""},
+                "machine_status": {"sub_status": 0, "progress": 0},
+            },
+        }
+    )
+
+    with patch.object(client, "_fetch_status", return_value=idle):
+        first = await client.status()
+        second = await client.status()
+
+    assert first.print_state == "complete"
+    assert first.printing is False
+    assert second.print_state != "completed"

@@ -198,6 +198,12 @@ def _parse_status(
             logger.warning("Missing key fields in modern MQTT payload: %s", missing_fields)
 
         print_state = print_status.get("state")
+
+        # Centauri Carbon 2 firmware 02.x reports print completion through
+        # machine_status.sub_status. Final progress may remain at 99%.
+        if machine_status.get("sub_status") == 2077:
+            print_state = "completed"
+
         if not print_state:
             _duration = float(print_status.get("print_duration", 0) or 0)
             _remaining = float(print_status.get("remaining_time_sec", 0) or 0)
@@ -335,6 +341,7 @@ class PrinterClient:
         self._listener_task: asyncio.Task[None] | None = None
         self._state_lock = asyncio.Lock()
         self._last_update_time: float = 0.0
+        self._terminal_status: PrinterStatus | None = None
         self.malformed_messages_count: int = 0
         self._stop_pending: bool = False
         self._file_layers_cache: dict[str, int] = {}
@@ -371,6 +378,12 @@ class PrinterClient:
         Retries up to _RETRY_ATTEMPTS times with exponential backoff.
         """
         s = await self._with_retry(self._fetch_status)
+
+        async with self._state_lock:
+            if self._terminal_status is not None:
+                s = self._terminal_status
+                self._terminal_status = None
+
         if s and not s.printing:
             self._stop_pending = False
         return s
@@ -747,7 +760,42 @@ class PrinterClient:
                                 )
 
                                 if isinstance(content, dict):
+                                    machine = content.get("machine_status", {})
+                                    ps = content.get("print_status", {})
+                                    logger.info(
+                                        "FW2 status: sub_status=%s progress=%s state=%s",
+                                        machine.get("sub_status"),
+                                        machine.get("progress"),
+                                        ps.get("state"),
+                                    )
+
                                     async with self._state_lock:
+                                        state = str(ps.get("state") or "").lower()
+
+                                        # A full FW02 GET_STATUS response with
+                                        # sub_status 0 and an empty state means
+                                        # the printer is idle. Do not retain
+                                        # stale fields from the finished job.
+                                        if (
+                                            state == ""
+                                            and machine.get("sub_status") == 0
+                                            and "print_status" in content
+                                        ):
+                                            self._accumulated_data.setdefault(
+                                                "result", {}
+                                            )["print_status"] = {}
+                                        if (
+                                            state in {"complete", "completed"}
+                                            or machine.get("sub_status") == 2077
+                                        ):
+                                            terminal_payload = {
+                                                "method": 1002,
+                                                "result": content,
+                                            }
+                                            self._terminal_status = _parse_status(
+                                                terminal_payload
+                                            )
+
                                         self._accumulated_data.setdefault(
                                             "result", {}
                                         )
@@ -881,6 +929,25 @@ class PrinterClient:
                                 new_print_state = (
                                     content.get("print_status", {}).get("state")
                                 )
+                                sub_status = (
+                                    content.get("machine_status", {}).get("sub_status")
+                                )
+
+                                # FW02 completion may exist only briefly in the
+                                # live 6000 MQTT push and be gone before the next
+                                # 1002 status poll. Preserve that terminal snapshot.
+                                if (
+                                    new_print_state in ("complete", "completed")
+                                    or sub_status == 2077
+                                ):
+                                    terminal_payload = {
+                                        "method": METHOD_STATUS_PUSH,
+                                        "result": content,
+                                    }
+                                    self._terminal_status = _parse_status(
+                                        terminal_payload,
+                                        self._file_layers_cache,
+                                    )
 
                                 if new_print_state is not None:
                                     prev_print_state = (
