@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 import tenacity
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import NetworkError, RetryAfter, TimedOut
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -189,7 +190,6 @@ class TelegramNotifier:
     async def _send_with_retry_fn(self, fn: Callable[[], Awaitable[None]]) -> None:
         from datetime import timedelta
 
-        from telegram.error import NetworkError, RetryAfter, TimedOut
 
         _default_wait = tenacity.wait_exponential(multiplier=0.5, min=0.5, max=8)
 
@@ -286,7 +286,7 @@ class TelegramNotifier:
         if (
             not force
             and self._progress_message_id is not None
-            and now_mono - self._progress_last_update < 300
+            and now_mono - self._progress_last_update < 60
         ):
             return
 
@@ -426,6 +426,8 @@ class TelegramNotifier:
                         connect_timeout=_TIMEOUT,
                     )
                     return
+                except (NetworkError, TimedOut, RetryAfter):
+                    raise
                 except Exception:
                     logger.exception("Telegram photo send failed for print completed")
                     jpeg = None

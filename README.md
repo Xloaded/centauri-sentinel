@@ -33,7 +33,7 @@ In addition to the original Sentinel functionality, this fork adds:
 
 - **Firmware 02.x support** for the Elegoo Centauri Carbon 2.
 - **Telegram live print status** with a current camera snapshot.
-- **Automatic progress updates** approximately every 5 minutes without filling the chat with new notifications.
+- **Automatic progress updates** approximately every 60 seconds by editing the active Telegram status card instead of filling the chat with new notifications.
 - **Silent milestone refreshes** at 1%, 25%, 50%, and 75% progress, giving an early live status card shortly after printing begins.
 - **Live browser-tab progress** while printing or paused, for example `9% Printing · Centauri Sentinel`.
 - **Remote printer controls** from the web dashboard, including Pause, Resume, Stop, and watcher Snooze.
@@ -42,6 +42,9 @@ In addition to the original Sentinel functionality, this fork adds:
 - **Active printer errors in /status**.
 - **Error deduplication** so an active fault alerts once, but can alert again after it clears and reoccurs.
 - **Improved firmware 02.x print-start handling** so Telegram waits for the real filename instead of showing Unknown file.
+- **Reliable firmware 02.x print completion detection**, including brief MQTT completion events that can disappear before the next status poll.
+- **Clean idle-state handling** so stale layer, duration, and printing state from the previous job are cleared after completion.
+- **Telegram completion snapshot retry** for transient network timeouts instead of immediately falling back to a text-only completion message.
 - **Centauri Carbon 2 / Canvas error descriptions**, including filament feed, retract, cutter, blockage and tangling faults.
 
 Example progress:
@@ -100,6 +103,16 @@ When the print finishes, Sentinel sends the completed filename, total print time
 Progress milestone updates at 1%, 25%, 50%, and 75% are sent silently so the latest print percentage and snapshot remain visible directly in the Telegram chat list.
 
 ![Telegram chat preview](docs/images/telegram-chat-preview.png)
+
+### Real-world failure detection
+
+Tested on a real ELEGOO Centauri Carbon 2 running firmware 02.01. Sentinel detected an actual print failure, sent the camera snapshot and confidence score to Telegram, and provided Resume, Stop, and Snooze controls.
+
+![Telegram real print failure detection](docs/images/telegram-failure-detected.png)
+
+The corresponding failed print as seen from the printer/slicer view:
+
+![Actual failed print detected by Sentinel](docs/images/real-print-failure.jpeg)
 
 ---
 

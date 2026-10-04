@@ -334,6 +334,18 @@ async def test_send_print_completed_alert_with_photo() -> None:
     mock_bot.send_photo.assert_called_once()
 
 
+async def test_send_print_completed_alert_retries_photo_after_timeout() -> None:
+    from telegram.error import TimedOut
+
+    notifier, mock_bot = _make_notifier_enabled()
+    mock_bot.send_photo.side_effect = [TimedOut(), None]
+
+    await notifier.send_print_completed_alert("file.gcode", 3661.0, b"jpeg")
+
+    assert mock_bot.send_photo.call_count == 2
+    mock_bot.send_message.assert_not_called()
+
+
 async def test_send_print_completed_alert_with_photo_fallback() -> None:
     notifier, mock_bot = _make_notifier_enabled()
     mock_bot.send_photo.side_effect = Exception("failed")
@@ -438,7 +450,7 @@ async def test_print_progress_first_update_sends_photo() -> None:
     assert notifier._progress_message_id == 123
 
 
-async def test_print_progress_after_five_minutes_edits_media() -> None:
+async def test_print_progress_after_one_minute_edits_media() -> None:
     notifier, mock_bot = _make_notifier_enabled()
     message = MagicMock()
     message.message_id = 123
@@ -446,7 +458,7 @@ async def test_print_progress_after_five_minutes_edits_media() -> None:
 
     with patch(
         "sentinel.notify.telegram.time.monotonic",
-        side_effect=[1000.0, 1301.0],
+        side_effect=[1000.0, 1061.0],
     ):
         await notifier.send_print_progress(
             _progress_status(10.0),

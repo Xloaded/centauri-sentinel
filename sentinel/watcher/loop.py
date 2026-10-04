@@ -423,12 +423,16 @@ class WatcherLoop:
                 printer_status.printing
                 and bool(printer_status.filename)
                 and getattr(printer_status, "total_layers", 0) > 0
-                and self.state in (WatcherState.ARMED, WatcherState.CAMERA_OFFLINE)
+                and self.state in (
+                    WatcherState.WARMUP,
+                    WatcherState.ARMED,
+                    WatcherState.CAMERA_OFFLINE,
+                )
                 and now_mono - self._last_resume_time >= resume_cooldown_s
             )
 
             if progress_status_allowed:
-                if now_mono - self._last_progress_status_time >= 300:
+                if now_mono - self._last_progress_status_time >= 60:
                     progress_jpeg = await self._safe_grab_jpeg()
 
                     detection_enabled = await self._db.get_setting(
