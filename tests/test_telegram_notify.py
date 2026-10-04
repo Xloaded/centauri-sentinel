@@ -447,7 +447,7 @@ async def test_print_progress_first_update_sends_photo() -> None:
     assert mock_bot.send_photo.call_args.kwargs["photo"] == b"jpeg-1"
     assert mock_bot.send_photo.call_args.kwargs["caption"] == "status 10%"
     assert mock_bot.send_photo.call_args.kwargs["disable_notification"] is False
-    assert notifier._progress_message_id == 123
+    assert notifier._progress_message_ids["99"] == 123
 
 
 async def test_print_progress_after_one_minute_edits_media() -> None:
@@ -515,7 +515,7 @@ async def test_print_progress_milestone_sends_silent_new_card() -> None:
         chat_id="99",
         message_id=123,
     )
-    assert notifier._progress_message_id == 456
+    assert notifier._progress_message_ids["99"] == 456
     assert notifier._progress_milestone == 25
 
 
@@ -533,5 +533,108 @@ async def test_print_progress_one_percent_creates_first_status_card() -> None:
     )
 
     mock_bot.send_photo.assert_awaited_once()
-    assert notifier._progress_message_id == 123
+    assert notifier._progress_message_ids["99"] == 123
     assert notifier._progress_milestone == 1
+
+
+# ---------------------------------------------------------------------------
+# Multi-chat
+# ---------------------------------------------------------------------------
+
+
+def _make_notifier_multi_chat() -> tuple[TelegramNotifier, MagicMock]:
+    settings = Settings(
+        printer_ip="10.0.0.1",
+        telegram_bot_token="tok",
+        telegram_chat_id="99",
+        telegram_chat_ids="100,101,99",
+        telegram_user_ids="1,2,3",
+        telegram_send_snapshots=True,
+    )
+
+    mock_bot = MagicMock()
+    mock_bot.send_message = AsyncMock()
+    mock_bot.send_photo = AsyncMock()
+    mock_bot.edit_message_media = AsyncMock()
+    mock_bot.edit_message_text = AsyncMock()
+    mock_bot.delete_message = AsyncMock()
+
+    with patch("sentinel.notify.telegram.Bot", return_value=mock_bot):
+        notifier = TelegramNotifier(settings)
+
+    notifier._bot = mock_bot
+    return notifier, mock_bot
+
+
+def test_multi_chat_authorization() -> None:
+    notifier, _ = _make_notifier_multi_chat()
+
+    assert notifier._chat_ids == ("99", "100", "101")
+    assert notifier.is_authorized(99, 1)
+    assert notifier.is_authorized(100, 1)
+    assert notifier.is_authorized(101, 2)
+
+    assert not notifier.is_authorized(102, 1)
+    assert not notifier.is_authorized(100, 999)
+
+
+async def test_multi_chat_progress_uses_separate_message_ids() -> None:
+    notifier, mock_bot = _make_notifier_multi_chat()
+
+    messages = []
+    for message_id in (201, 202, 203):
+        message = MagicMock()
+        message.message_id = message_id
+        messages.append(message)
+
+    mock_bot.send_photo.side_effect = messages
+
+    await notifier.send_print_progress(
+        _progress_status(1.0),
+        jpeg=b"jpeg",
+        caption="status 1%",
+    )
+
+    assert notifier._progress_message_ids == {
+        "99": 201,
+        "100": 202,
+        "101": 203,
+    }
+
+    assert mock_bot.send_photo.await_count == 3
+    assert [
+        call.kwargs["chat_id"]
+        for call in mock_bot.send_photo.await_args_list
+    ] == ["99", "100", "101"]
+
+
+async def test_multi_chat_progress_edits_each_chat_message() -> None:
+    notifier, mock_bot = _make_notifier_multi_chat()
+
+    notifier._progress_filename = "benchy.gcode"
+    notifier._progress_message_ids = {
+        "99": 201,
+        "100": 202,
+        "101": 203,
+    }
+    notifier._progress_milestone = 1
+    notifier._progress_last_update = 1000.0
+
+    with patch("sentinel.notify.telegram.time.monotonic", return_value=1061.0):
+        await notifier.send_print_progress(
+            _progress_status(10.0),
+            jpeg=b"jpeg-new",
+            caption="status 10%",
+        )
+
+    assert mock_bot.edit_message_media.await_count == 3
+
+    targets = [
+        (call.kwargs["chat_id"], call.kwargs["message_id"])
+        for call in mock_bot.edit_message_media.await_args_list
+    ]
+    assert targets == [
+        ("99", 201),
+        ("100", 202),
+        ("101", 203),
+    ]

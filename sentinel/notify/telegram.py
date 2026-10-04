@@ -55,10 +55,19 @@ class TelegramNotifier:
             if settings.telegram_bot_token
             else ""
         )
-        self._chat_id = settings.telegram_chat_id or ""
+        chat_ids: list[str] = []
+        if settings.telegram_chat_id and settings.telegram_chat_id.strip():
+            chat_ids.append(settings.telegram_chat_id.strip())
+        if settings.telegram_chat_ids:
+            chat_ids.extend(
+                chat_id.strip()
+                for chat_id in settings.telegram_chat_ids.split(",")
+                if chat_id.strip()
+            )
+        self._chat_ids = tuple(dict.fromkeys(chat_ids))
         self._allowed_users = _parse_user_ids(settings.telegram_user_ids)
         self._snapshots_dir = Path(settings.db_path).parent / "snapshots"
-        self._progress_message_id: int | None = None
+        self._progress_message_ids: dict[str, int] = {}
         self._progress_last_update = 0.0
         self._progress_filename: str | None = None
         self._progress_milestone = 0
@@ -73,7 +82,7 @@ class TelegramNotifier:
         """Return True iff chat_id matches and user_id is in the allowlist."""
         if not self._enabled:
             return False
-        return str(chat_id) == str(self._chat_id) and user_id in self._allowed_users
+        return str(chat_id) in self._chat_ids and user_id in self._allowed_users
 
     async def send_detection_alert(
         self,
@@ -109,83 +118,88 @@ class TelegramNotifier:
             f"currently {self._settings.ml_score_threshold})"
         )
 
-        async def _send() -> None:
-            nonlocal photo_bytes
-            if photo_bytes and self._settings.telegram_send_snapshots:
-                try:
-                    await self._bot.send_photo(
-                        chat_id=self._chat_id,
-                        photo=photo_bytes,
-                        caption=caption,
-                        reply_markup=keyboard,
-                        read_timeout=_TIMEOUT,
-                        write_timeout=_TIMEOUT,
-                        connect_timeout=_TIMEOUT,
-                    )
-                    return
-                except Exception:
-                    logger.exception("Telegram photo send failed for detection alert")
-                    photo_bytes = None
+        for chat_id in self._chat_ids:
+            async def _send(chat_id: str = chat_id) -> None:
+                if photo_bytes and self._settings.telegram_send_snapshots:
+                    try:
+                        await self._bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo_bytes,
+                            caption=caption,
+                            reply_markup=keyboard,
+                            read_timeout=_TIMEOUT,
+                            write_timeout=_TIMEOUT,
+                            connect_timeout=_TIMEOUT,
+                        )
+                        return
+                    except Exception:
+                        logger.exception(
+                            "Telegram photo send failed for detection alert in chat %s",
+                            chat_id,
+                        )
 
-            text_to_send = caption
-            if self._settings.telegram_send_snapshots:
-                text_to_send += "\n(Snapshot not available)"
+                text_to_send = caption
+                if self._settings.telegram_send_snapshots:
+                    text_to_send += "\n(Snapshot not available)"
 
-            await self._bot.send_message(
-                chat_id=self._chat_id,
-                text=text_to_send,
-                reply_markup=keyboard,
-                read_timeout=_TIMEOUT,
-                write_timeout=_TIMEOUT,
-                connect_timeout=_TIMEOUT,
-            )
+                await self._bot.send_message(
+                    chat_id=chat_id,
+                    text=text_to_send,
+                    reply_markup=keyboard,
+                    read_timeout=_TIMEOUT,
+                    write_timeout=_TIMEOUT,
+                    connect_timeout=_TIMEOUT,
+                )
 
-        await self._send_with_retry_fn(_send)
+            await self._send_with_retry_fn(_send)
 
     async def send_stall_alert(self) -> None:
         if not self._enabled:
             return
 
-        async def _send() -> None:
-            await self._bot.send_message(
-                chat_id=self._chat_id,
-                text="⚠️ Sentinel watcher stalled — please check the service.",
-                read_timeout=_TIMEOUT,
-                write_timeout=_TIMEOUT,
-                connect_timeout=_TIMEOUT,
-            )
+        for chat_id in self._chat_ids:
+            async def _send(chat_id: str = chat_id) -> None:
+                await self._bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Sentinel watcher stalled — please check the service.",
+                    read_timeout=_TIMEOUT,
+                    write_timeout=_TIMEOUT,
+                    connect_timeout=_TIMEOUT,
+                )
 
-        await self._send_with_retry_fn(_send)
+            await self._send_with_retry_fn(_send)
 
     async def send_camera_offline_alert(self) -> None:
         if not self._enabled:
             return
 
-        async def _send() -> None:
-            await self._bot.send_message(
-                chat_id=self._chat_id,
-                text="📷 Camera offline — detection suspended.",
-                read_timeout=_TIMEOUT,
-                write_timeout=_TIMEOUT,
-                connect_timeout=_TIMEOUT,
-            )
+        for chat_id in self._chat_ids:
+            async def _send(chat_id: str = chat_id) -> None:
+                await self._bot.send_message(
+                    chat_id=chat_id,
+                    text="📷 Camera offline — detection suspended.",
+                    read_timeout=_TIMEOUT,
+                    write_timeout=_TIMEOUT,
+                    connect_timeout=_TIMEOUT,
+                )
 
-        await self._send_with_retry_fn(_send)
+            await self._send_with_retry_fn(_send)
 
     async def send_text(self, text: str) -> None:
         if not self._enabled:
             return
 
-        async def _send() -> None:
-            await self._bot.send_message(
-                chat_id=self._chat_id,
-                text=text,
-                read_timeout=_TIMEOUT,
-                write_timeout=_TIMEOUT,
-                connect_timeout=_TIMEOUT,
-            )
+        for chat_id in self._chat_ids:
+            async def _send(chat_id: str = chat_id) -> None:
+                await self._bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    read_timeout=_TIMEOUT,
+                    write_timeout=_TIMEOUT,
+                    connect_timeout=_TIMEOUT,
+                )
 
-        await self._send_with_retry_fn(_send)
+            await self._send_with_retry_fn(_send)
 
     async def _send_with_retry_fn(self, fn: Callable[[], Awaitable[None]]) -> None:
         from datetime import timedelta
@@ -278,14 +292,14 @@ class TelegramNotifier:
         filename = status.filename or None
 
         if filename != self._progress_filename:
-            self._progress_message_id = None
+            self._progress_message_ids.clear()
             self._progress_last_update = 0.0
             self._progress_filename = filename
             self._progress_milestone = 0
 
         if (
             not force
-            and self._progress_message_id is not None
+            and self._progress_message_ids
             and now_mono - self._progress_last_update < 60
         ):
             return
@@ -299,68 +313,71 @@ class TelegramNotifier:
                 milestone = threshold
                 break
 
-        refresh_card = (
-            self._progress_message_id is None
-            or milestone > self._progress_milestone
-        )
+        for chat_id in self._chat_ids:
+            old_message_id = self._progress_message_ids.get(chat_id)
+            refresh_card = (
+                old_message_id is None
+                or milestone > self._progress_milestone
+            )
 
-        try:
-            if refresh_card:
-                old_message_id = self._progress_message_id
+            try:
+                if refresh_card:
+                    if jpeg is not None:
+                        message = await self._bot.send_photo(
+                            chat_id=chat_id,
+                            photo=jpeg,
+                            caption=text,
+                            disable_notification=(old_message_id is not None),
+                        )
+                    else:
+                        message = await self._bot.send_message(
+                            chat_id=chat_id,
+                            text=text,
+                            disable_notification=(old_message_id is not None),
+                        )
 
-                if jpeg is not None:
-                    message = await self._bot.send_photo(
-                        chat_id=self._chat_id,
-                        photo=jpeg,
-                        caption=text,
-                        disable_notification=(old_message_id is not None),
+                    self._progress_message_ids[chat_id] = message.message_id
+
+                    if old_message_id is not None:
+                        try:
+                            await self._bot.delete_message(
+                                chat_id=chat_id,
+                                message_id=old_message_id,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Failed to remove previous Telegram status card",
+                                exc_info=True,
+                            )
+
+                elif jpeg is not None:
+                    from telegram import InputMediaPhoto
+
+                    await self._bot.edit_message_media(
+                        chat_id=chat_id,
+                        message_id=old_message_id,
+                        media=InputMediaPhoto(media=jpeg, caption=text),
                     )
+
                 else:
-                    message = await self._bot.send_message(
-                        chat_id=self._chat_id,
+                    await self._bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=old_message_id,
                         text=text,
-                        disable_notification=(old_message_id is not None),
                     )
 
-                self._progress_message_id = message.message_id
-                self._progress_milestone = milestone
+            except Exception as exc:
+                if "message is not modified" not in str(exc).lower():
+                    logger.exception(
+                        "Failed to update Telegram print status for chat %s",
+                        chat_id,
+                    )
 
-                if old_message_id is not None:
-                    try:
-                        await self._bot.delete_message(
-                            chat_id=self._chat_id,
-                            message_id=old_message_id,
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Failed to remove previous Telegram status card",
-                            exc_info=True,
-                        )
-
-            elif jpeg is not None:
-                from telegram import InputMediaPhoto
-
-                await self._bot.edit_message_media(
-                    chat_id=self._chat_id,
-                    message_id=self._progress_message_id,
-                    media=InputMediaPhoto(media=jpeg, caption=text),
-                )
-
-            else:
-                await self._bot.edit_message_text(
-                    chat_id=self._chat_id,
-                    message_id=self._progress_message_id,
-                    text=text,
-                )
-
-            self._progress_last_update = now_mono
-
-        except Exception as exc:
-            if "message is not modified" not in str(exc).lower():
-                logger.exception("Failed to update Telegram print status")
+        self._progress_milestone = milestone
+        self._progress_last_update = now_mono
 
     def reset_print_progress(self) -> None:
-        self._progress_message_id = None
+        self._progress_message_ids.clear()
         self._progress_last_update = 0.0
         self._progress_filename = None
         self._progress_milestone = 0
@@ -374,32 +391,34 @@ class TelegramNotifier:
         name = filename or "Unknown file"
         caption = f"🚀 Print Started\n📄 {name}"
 
-        async def _send() -> None:
-            nonlocal jpeg
-            if jpeg and self._settings.telegram_send_snapshots:
-                try:
-                    await self._bot.send_photo(
-                        chat_id=self._chat_id,
-                        photo=jpeg,
-                        caption=caption,
-                        read_timeout=_TIMEOUT,
-                        write_timeout=_TIMEOUT,
-                        connect_timeout=_TIMEOUT,
-                    )
-                    return
-                except Exception:
-                    logger.exception("Telegram photo send failed for print start")
-                    jpeg = None
+        for chat_id in self._chat_ids:
+            async def _send(chat_id: str = chat_id) -> None:
+                if jpeg and self._settings.telegram_send_snapshots:
+                    try:
+                        await self._bot.send_photo(
+                            chat_id=chat_id,
+                            photo=jpeg,
+                            caption=caption,
+                            read_timeout=_TIMEOUT,
+                            write_timeout=_TIMEOUT,
+                            connect_timeout=_TIMEOUT,
+                        )
+                        return
+                    except Exception:
+                        logger.exception(
+                            "Telegram photo send failed for print start in chat %s",
+                            chat_id,
+                        )
 
-            await self._bot.send_message(
-                chat_id=self._chat_id,
-                text=caption,
-                read_timeout=_TIMEOUT,
-                write_timeout=_TIMEOUT,
-                connect_timeout=_TIMEOUT,
-            )
+                await self._bot.send_message(
+                    chat_id=chat_id,
+                    text=caption,
+                    read_timeout=_TIMEOUT,
+                    write_timeout=_TIMEOUT,
+                    connect_timeout=_TIMEOUT,
+                )
 
-        await self._send_with_retry_fn(_send)
+            await self._send_with_retry_fn(_send)
 
     async def send_print_completed_alert(
         self, filename: str | None, elapsed_seconds: float, jpeg: bytes | None = None
@@ -413,34 +432,36 @@ class TelegramNotifier:
         time_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
         caption = f"✅ Print completed: {name}\nTime: {time_str}"
 
-        async def _send() -> None:
-            nonlocal jpeg
-            if jpeg and self._settings.telegram_send_snapshots:
-                try:
-                    await self._bot.send_photo(
-                        chat_id=self._chat_id,
-                        photo=jpeg,
-                        caption=caption,
-                        read_timeout=_TIMEOUT,
-                        write_timeout=_TIMEOUT,
-                        connect_timeout=_TIMEOUT,
-                    )
-                    return
-                except (NetworkError, TimedOut, RetryAfter):
-                    raise
-                except Exception:
-                    logger.exception("Telegram photo send failed for print completed")
-                    jpeg = None
+        for chat_id in self._chat_ids:
+            async def _send(chat_id: str = chat_id) -> None:
+                if jpeg and self._settings.telegram_send_snapshots:
+                    try:
+                        await self._bot.send_photo(
+                            chat_id=chat_id,
+                            photo=jpeg,
+                            caption=caption,
+                            read_timeout=_TIMEOUT,
+                            write_timeout=_TIMEOUT,
+                            connect_timeout=_TIMEOUT,
+                        )
+                        return
+                    except (NetworkError, TimedOut, RetryAfter):
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "Telegram photo send failed for print completed in chat %s",
+                            chat_id,
+                        )
 
-            await self._bot.send_message(
-                chat_id=self._chat_id,
-                text=caption,
-                read_timeout=_TIMEOUT,
-                write_timeout=_TIMEOUT,
-                connect_timeout=_TIMEOUT,
-            )
+                await self._bot.send_message(
+                    chat_id=chat_id,
+                    text=caption,
+                    read_timeout=_TIMEOUT,
+                    write_timeout=_TIMEOUT,
+                    connect_timeout=_TIMEOUT,
+                )
 
-        await self._send_with_retry_fn(_send)
+            await self._send_with_retry_fn(_send)
 
     async def send_external_pause_alert(self, jpeg: bytes | None = None) -> None:
         if not self._enabled:
@@ -448,32 +469,34 @@ class TelegramNotifier:
 
         caption = "⏸️ Printer paused externally (possible filament runout or manual pause)."
 
-        async def _send() -> None:
-            nonlocal jpeg
-            if jpeg and self._settings.telegram_send_snapshots:
-                try:
-                    await self._bot.send_photo(
-                        chat_id=self._chat_id,
-                        photo=jpeg,
-                        caption=caption,
-                        read_timeout=_TIMEOUT,
-                        write_timeout=_TIMEOUT,
-                        connect_timeout=_TIMEOUT,
-                    )
-                    return
-                except Exception:
-                    logger.exception("Telegram photo send failed for external pause")
-                    jpeg = None
+        for chat_id in self._chat_ids:
+            async def _send(chat_id: str = chat_id) -> None:
+                if jpeg and self._settings.telegram_send_snapshots:
+                    try:
+                        await self._bot.send_photo(
+                            chat_id=chat_id,
+                            photo=jpeg,
+                            caption=caption,
+                            read_timeout=_TIMEOUT,
+                            write_timeout=_TIMEOUT,
+                            connect_timeout=_TIMEOUT,
+                        )
+                        return
+                    except Exception:
+                        logger.exception(
+                            "Telegram photo send failed for external pause in chat %s",
+                            chat_id,
+                        )
 
-            await self._bot.send_message(
-                chat_id=self._chat_id,
-                text=caption,
-                read_timeout=_TIMEOUT,
-                write_timeout=_TIMEOUT,
-                connect_timeout=_TIMEOUT,
-            )
+                await self._bot.send_message(
+                    chat_id=chat_id,
+                    text=caption,
+                    read_timeout=_TIMEOUT,
+                    write_timeout=_TIMEOUT,
+                    connect_timeout=_TIMEOUT,
+                )
 
-        await self._send_with_retry_fn(_send)
+            await self._send_with_retry_fn(_send)
 
     async def close(self) -> None:
         """Close the underlying bot session."""

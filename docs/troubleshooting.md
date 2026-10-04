@@ -152,8 +152,8 @@ The watcher resumes from the last known state in the database.
    Find it by calling `https://api.telegram.org/bot<TOKEN>/getUpdates` and looking for
    `"from":{"id":...}`.
 
-2. **Chat ID mismatch.** `TELEGRAM_CHAT_ID` must match the chat where you are sending
-   commands. Group chats have negative IDs; personal chats have positive IDs.
+2. **Chat ID mismatch.** The chat must be configured in `TELEGRAM_CHAT_ID` or
+   `TELEGRAM_CHAT_IDS`. Group chats have negative IDs; personal chats have positive IDs.
 
 3. **Bot not started.** Send `/start` to the bot first to register the chat.
 

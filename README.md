@@ -242,7 +242,8 @@ Disabled if `TELEGRAM_BOT_TOKEN` is unset.
 | Variable | Default | Purpose |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | — | Bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | — | Chat to send alerts to |
+| `TELEGRAM_CHAT_ID` | — | Primary/legacy destination chat ID |
+| `TELEGRAM_CHAT_IDS` | — | Optional comma-separated additional destination chat/group IDs |
 | `TELEGRAM_USER_IDS` | — | Comma-separated list of authorised user IDs |
 | `TELEGRAM_SEND_SNAPSHOTS` | `false` | Set `true` to upload camera snapshots to Telegram with each alert (opt-in; see Privacy Notice below) |
 
@@ -335,7 +336,8 @@ For live progress cards, snapshots, print lifecycle notifications and printer er
    https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates
    ```
    Look for `"chat":{"id":...}` in the response. A personal chat gives a positive integer;
-   a group gives a negative integer. This is `TELEGRAM_CHAT_ID`.
+   a group gives a negative integer. Use `TELEGRAM_CHAT_ID` for one destination, or
+   `TELEGRAM_CHAT_IDS` for additional comma-separated chats/groups. Both settings are combined.
 
 4. Find your **user ID**: look for `"from":{"id":...}` in the same response. This is your entry
    in `TELEGRAM_USER_IDS`. Add more users by comma-separating their IDs.

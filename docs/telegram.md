@@ -22,13 +22,18 @@ Centauri Sentinel can send printer events, live progress and camera snapshots to
 Add the Telegram settings to `.env`:
 
     TELEGRAM_BOT_TOKEN=your_bot_token
-    TELEGRAM_CHAT_ID=your_chat_id
+    TELEGRAM_CHAT_ID=your_primary_chat_id
+    TELEGRAM_CHAT_IDS=your_group_chat_id,another_chat_id
     NOTIFY_ON_PRINT_START=true
     NOTIFY_ON_PRINT_COMPLETED=true
     NOTIFY_ON_PRINT_PAUSED=true
     TELEGRAM_SEND_SNAPSHOTS=true
 
-Never commit your real bot token or chat ID to Git.
+`TELEGRAM_CHAT_ID` remains backward compatible. `TELEGRAM_CHAT_IDS` can contain additional
+comma-separated chats or private groups; notifications are sent to all configured destinations.
+Commands are accepted only when both the chat ID and user ID are authorised.
+
+Never commit your real bot token, chat IDs or user IDs to Git.
 
 After changing `.env`, rebuild/restart Sentinel:
 
@@ -40,7 +45,7 @@ While printing, Sentinel maintains a Telegram status card containing the latest 
 
 ![Telegram live print progress](images/telegram-progress.png)
 
-The status card is updated approximately every five minutes. At 1%, 25%, 50% and 75%, Sentinel refreshes the card silently so the latest progress is also visible in the Telegram chat preview without generating another notification. The 1% milestone provides an early status card shortly after the print begins.
+The status card is updated approximately every 60 seconds. At 1%, 25%, 50% and 75%, Sentinel refreshes the card silently so the latest progress is also visible in the Telegram chat preview without generating another notification. The 1% milestone provides an early status card shortly after the print begins.
 
 ![Telegram chat preview](images/telegram-chat-preview.png)
 

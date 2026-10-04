@@ -421,6 +421,7 @@ class WatcherLoop:
             now_mono = time.monotonic()
             progress_status_allowed = (
                 printer_status.printing
+                and self._alerted_new_print
                 and bool(printer_status.filename)
                 and getattr(printer_status, "total_layers", 0) > 0
                 and self.state in (

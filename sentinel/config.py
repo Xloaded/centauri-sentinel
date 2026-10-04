@@ -129,6 +129,7 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: SecretStr | None = None
     telegram_chat_id: str | None = None
+    telegram_chat_ids: str | None = None
     telegram_user_ids: str | None = None
     telegram_send_snapshots: bool = False
 
@@ -184,8 +185,13 @@ class Settings(BaseSettings):
 
         # 1. Telegram checks
         if self.telegram_bot_token:
-            if not self.telegram_chat_id or not self.telegram_chat_id.strip():
-                raise ValueError("TELEGRAM_CHAT_ID is required when TELEGRAM_BOT_TOKEN is set")
+            has_chat_id = bool(self.telegram_chat_id and self.telegram_chat_id.strip())
+            has_chat_ids = bool(self.telegram_chat_ids and self.telegram_chat_ids.strip())
+            if not has_chat_id and not has_chat_ids:
+                raise ValueError(
+                    "TELEGRAM_CHAT_ID or TELEGRAM_CHAT_IDS is required "
+                    "when TELEGRAM_BOT_TOKEN is set"
+                )
             if not self.telegram_user_ids or not self.telegram_user_ids.strip():
                 raise ValueError("TELEGRAM_USER_IDS is required when TELEGRAM_BOT_TOKEN is set")
 
