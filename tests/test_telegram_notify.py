@@ -638,3 +638,18 @@ async def test_multi_chat_progress_edits_each_chat_message() -> None:
         ("100", 202),
         ("101", 203),
     ]
+
+
+async def test_progress_failure_does_not_start_throttle() -> None:
+    notifier, mock_bot = _make_notifier_enabled()
+
+    mock_bot.send_photo.side_effect = RuntimeError("Telegram unavailable")
+
+    with patch("sentinel.notify.telegram.time.monotonic", return_value=1000.0):
+        await notifier.send_print_progress(
+            _progress_status(1.0),
+            jpeg=b"jpeg",
+            caption="status",
+        )
+
+    assert notifier._progress_last_update == 0.0

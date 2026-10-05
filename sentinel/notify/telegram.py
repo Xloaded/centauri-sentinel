@@ -313,6 +313,8 @@ class TelegramNotifier:
                 milestone = threshold
                 break
 
+        update_succeeded = False
+
         for chat_id in self._chat_ids:
             old_message_id = self._progress_message_ids.get(chat_id)
             refresh_card = (
@@ -367,14 +369,19 @@ class TelegramNotifier:
                     )
 
             except Exception as exc:
-                if "message is not modified" not in str(exc).lower():
+                if "message is not modified" in str(exc).lower():
+                    update_succeeded = True
+                else:
                     logger.exception(
                         "Failed to update Telegram print status for chat %s",
                         chat_id,
                     )
+            else:
+                update_succeeded = True
 
-        self._progress_milestone = milestone
-        self._progress_last_update = now_mono
+        if update_succeeded:
+            self._progress_milestone = milestone
+            self._progress_last_update = now_mono
 
     def reset_print_progress(self) -> None:
         self._progress_message_ids.clear()

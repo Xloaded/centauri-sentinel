@@ -762,13 +762,6 @@ class PrinterClient:
                                 if isinstance(content, dict):
                                     machine = content.get("machine_status", {})
                                     ps = content.get("print_status", {})
-                                    logger.info(
-                                        "FW2 status: sub_status=%s progress=%s state=%s",
-                                        machine.get("sub_status"),
-                                        machine.get("progress"),
-                                        ps.get("state"),
-                                    )
-
                                     async with self._state_lock:
                                         state = str(ps.get("state") or "").lower()
 
