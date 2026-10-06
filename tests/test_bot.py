@@ -764,3 +764,67 @@ async def test_callback_confirm_stop_photo_message() -> None:
     update.callback_query.edit_message_caption.assert_called_once()
     assert "cancelled" in update.callback_query.edit_message_caption.call_args[1]["caption"].lower()
     update.callback_query.edit_message_text.assert_not_called()
+
+async def test_ack_timeout_does_not_discard_controls():
+    from telegram.error import TimedOut
+    for action in ("resume", "stop", "snooze"):
+        handler = _make_handler()
+        handler._watcher.snooze = AsyncMock()
+        update = _make_update(callback_data=action)
+        update.callback_query.answer.side_effect = TimedOut()
+        await handler.handle_callback(update, None)
+        if action == "resume":
+            handler._printer.resume.assert_awaited_once()
+        elif action == "stop":
+            assert _AUTHORIZED_USER in handler._pending_stops
+            handler._printer.stop.assert_not_awaited()
+        else:
+            handler._watcher.snooze.assert_awaited_once()
+
+
+async def test_result_delivery_failure_does_not_report_resume_failure(caplog):
+    from telegram.error import TimedOut
+    handler = _make_handler()
+    update = _make_update(callback_data="resume")
+    update.callback_query.edit_message_text.side_effect = TimedOut()
+    await handler.handle_callback(update, None)
+    handler._printer.resume.assert_awaited_once()
+    assert "Resume failed via inline keyboard" not in caplog.text
+    assert "result delivery failed" in caplog.text
+
+
+async def test_status_photo_timeout_falls_back_to_text():
+    from telegram.error import TimedOut
+    handler = _make_handler()
+    update = _make_update()
+    update.message.reply_photo.side_effect = TimedOut()
+    await handler.cmd_status(update, None)
+    update.message.reply_text.assert_awaited_once()
+    assert "Chamber feed unavailable" not in update.message.reply_text.call_args.args[0]
+
+
+async def test_status_total_delivery_failure_is_contained():
+    from telegram.error import TimedOut
+    handler = _make_handler()
+    update = _make_update()
+    update.message.reply_photo.side_effect = TimedOut()
+    update.message.reply_text.side_effect = TimedOut()
+    await handler.cmd_status(update, None)
+
+
+async def test_callback_result_delivery_runs_outside_control_handler():
+    import asyncio
+    handler = _make_handler()
+    update = _make_update(callback_data="resume")
+    context = MagicMock()
+    tasks = []
+    context.application.create_task.side_effect = lambda coro: tasks.append(asyncio.create_task(coro))
+    gate = asyncio.Event()
+    async def edit(*args, **kwargs):
+        await gate.wait()
+    update.callback_query.edit_message_text.side_effect = edit
+    await asyncio.wait_for(handler.handle_callback(update, context), timeout=0.5)
+    handler._printer.resume.assert_awaited_once()
+    assert len(tasks) == 1
+    gate.set()
+    await asyncio.gather(*tasks)

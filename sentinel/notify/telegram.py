@@ -10,18 +10,20 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 import tenacity
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import NetworkError, RetryAfter, TimedOut
+from telegram.request import HTTPXRequest
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from sentinel.config import Settings
+    from sentinel.printer.types import PrinterStatus
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +55,9 @@ class TelegramNotifier:
         self._bot = Bot(
             token=settings.telegram_bot_token.get_secret_value()
             if settings.telegram_bot_token
-            else ""
+            else "",
+            request=HTTPXRequest(connect_timeout=10, read_timeout=10,
+                                 write_timeout=10, media_write_timeout=30),
         )
         chat_ids: list[str] = []
         if settings.telegram_chat_id and settings.telegram_chat_id.strip():
@@ -118,6 +122,7 @@ class TelegramNotifier:
             f"currently {self._settings.ml_score_threshold})"
         )
 
+        errors: list[Exception] = []
         for chat_id in self._chat_ids:
             async def _send(chat_id: str = chat_id) -> None:
                 if photo_bytes and self._settings.telegram_send_snapshots:
@@ -151,12 +156,19 @@ class TelegramNotifier:
                     connect_timeout=_TIMEOUT,
                 )
 
-            await self._send_with_retry_fn(_send)
+            try:
+                await self._send_with_retry_fn(_send)
+            except Exception as exc:
+                logger.exception("Telegram delivery failed for chat %s", chat_id)
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     async def send_stall_alert(self) -> None:
         if not self._enabled:
             return
 
+        errors: list[Exception] = []
         for chat_id in self._chat_ids:
             async def _send(chat_id: str = chat_id) -> None:
                 await self._bot.send_message(
@@ -167,12 +179,19 @@ class TelegramNotifier:
                     connect_timeout=_TIMEOUT,
                 )
 
-            await self._send_with_retry_fn(_send)
+            try:
+                await self._send_with_retry_fn(_send)
+            except Exception as exc:
+                logger.exception("Telegram delivery failed for chat %s", chat_id)
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     async def send_camera_offline_alert(self) -> None:
         if not self._enabled:
             return
 
+        errors: list[Exception] = []
         for chat_id in self._chat_ids:
             async def _send(chat_id: str = chat_id) -> None:
                 await self._bot.send_message(
@@ -183,12 +202,19 @@ class TelegramNotifier:
                     connect_timeout=_TIMEOUT,
                 )
 
-            await self._send_with_retry_fn(_send)
+            try:
+                await self._send_with_retry_fn(_send)
+            except Exception as exc:
+                logger.exception("Telegram delivery failed for chat %s", chat_id)
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     async def send_text(self, text: str) -> None:
         if not self._enabled:
             return
 
+        errors: list[Exception] = []
         for chat_id in self._chat_ids:
             async def _send(chat_id: str = chat_id) -> None:
                 await self._bot.send_message(
@@ -199,7 +225,13 @@ class TelegramNotifier:
                     connect_timeout=_TIMEOUT,
                 )
 
-            await self._send_with_retry_fn(_send)
+            try:
+                await self._send_with_retry_fn(_send)
+            except Exception as exc:
+                logger.exception("Telegram delivery failed for chat %s", chat_id)
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     async def _send_with_retry_fn(self, fn: Callable[[], Awaitable[None]]) -> None:
         from datetime import timedelta
@@ -243,7 +275,7 @@ class TelegramNotifier:
         return f"{minutes}m {secs}s"
 
     @staticmethod
-    def _format_print_progress(status) -> str:
+    def _format_print_progress(status: PrinterStatus) -> str:
         progress = max(0.0, min(100.0, float(status.progress or 0.0)))
         filled = round(progress / 5)
         bar = "█" * filled + "░" * (20 - filled)
@@ -278,7 +310,7 @@ class TelegramNotifier:
 
     async def send_print_progress(
         self,
-        status,
+        status: PrinterStatus,
         *,
         jpeg: bytes | None = None,
         caption: str | None = None,
@@ -398,6 +430,7 @@ class TelegramNotifier:
         name = filename or "Unknown file"
         caption = f"🚀 Print Started\n📄 {name}"
 
+        errors: list[Exception] = []
         for chat_id in self._chat_ids:
             async def _send(chat_id: str = chat_id) -> None:
                 if jpeg and self._settings.telegram_send_snapshots:
@@ -425,7 +458,13 @@ class TelegramNotifier:
                     connect_timeout=_TIMEOUT,
                 )
 
-            await self._send_with_retry_fn(_send)
+            try:
+                await self._send_with_retry_fn(_send)
+            except Exception as exc:
+                logger.exception("Telegram delivery failed for chat %s", chat_id)
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     async def send_print_completed_alert(
         self, filename: str | None, elapsed_seconds: float, jpeg: bytes | None = None
@@ -439,6 +478,7 @@ class TelegramNotifier:
         time_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
         caption = f"✅ Print completed: {name}\nTime: {time_str}"
 
+        errors: list[Exception] = []
         for chat_id in self._chat_ids:
             async def _send(chat_id: str = chat_id) -> None:
                 if jpeg and self._settings.telegram_send_snapshots:
@@ -468,7 +508,13 @@ class TelegramNotifier:
                     connect_timeout=_TIMEOUT,
                 )
 
-            await self._send_with_retry_fn(_send)
+            try:
+                await self._send_with_retry_fn(_send)
+            except Exception as exc:
+                logger.exception("Telegram delivery failed for chat %s", chat_id)
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     async def send_external_pause_alert(self, jpeg: bytes | None = None) -> None:
         if not self._enabled:
@@ -476,6 +522,7 @@ class TelegramNotifier:
 
         caption = "⏸️ Printer paused externally (possible filament runout or manual pause)."
 
+        errors: list[Exception] = []
         for chat_id in self._chat_ids:
             async def _send(chat_id: str = chat_id) -> None:
                 if jpeg and self._settings.telegram_send_snapshots:
@@ -503,7 +550,13 @@ class TelegramNotifier:
                     connect_timeout=_TIMEOUT,
                 )
 
-            await self._send_with_retry_fn(_send)
+            try:
+                await self._send_with_retry_fn(_send)
+            except Exception as exc:
+                logger.exception("Telegram delivery failed for chat %s", chat_id)
+                errors.append(exc)
+        if errors:
+            raise errors[0]
 
     async def close(self) -> None:
         """Close the underlying bot session."""

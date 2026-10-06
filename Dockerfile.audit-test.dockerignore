@@ -1,0 +1,17 @@
+**
+!Dockerfile.audit-test
+!pyproject.toml
+!uv.lock
+!sentinel/
+!sentinel/**
+!tests/
+!tests/**
+**/__pycache__/
+**/*.pyc
+**/.env*
+
+!Dockerfile
+!docker-compose.yml
+!README.md
+!docker/
+!docker/**

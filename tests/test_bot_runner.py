@@ -162,9 +162,9 @@ async def test_bot_runner_all_handlers_added() -> None:
 
     with (
         patch("telegram.ext.Application") as mock_app_class,
-        patch("telegram.ext.CommandHandler", side_effect=lambda name, fn: (name, fn)),
+        patch("telegram.ext.CommandHandler", side_effect=lambda name, fn, **kwargs: (name, fn)),
         patch("telegram.ext.CallbackQueryHandler", side_effect=lambda fn: fn),
-        patch("telegram.ext.MessageHandler", side_effect=lambda filters, fn: (filters, fn)),
+        patch("telegram.ext.MessageHandler", side_effect=lambda filters, fn, **kwargs: (filters, fn)),
     ):
         mock_app_class.builder.return_value = builder
         runner = BotRunner(_SETTINGS_TG, handler)
@@ -389,3 +389,21 @@ async def test_bot_runner_supervisor_recovery_alert_on_first_crash() -> None:
     assert any("recovered" in m for m in messages), (
         f"expected recovery alert after first crash, got: {messages}"
     )
+
+
+async def test_status_handlers_do_not_block_control_updates():
+    from telegram.ext import CallbackQueryHandler, CommandHandler
+    app, builder = _make_ptb_app()
+    with patch("telegram.ext.Application") as cls:
+        cls.builder.return_value = builder
+        runner = BotRunner(_SETTINGS_TG, _make_handler())
+        await runner.start()
+        handlers = [c.args[0] for c in app.add_handler.call_args_list]
+        for h in handlers:
+            if isinstance(h, CommandHandler) and h.commands & {"status", "snapshot"}:
+                assert h.block is False
+            if isinstance(h, CallbackQueryHandler):
+                assert getattr(h.block, "value", h.block) is True
+        builder.connect_timeout.assert_called_once_with(10)
+        builder.get_updates_connect_timeout.assert_called_once_with(10)
+        await runner.stop()

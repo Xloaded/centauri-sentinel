@@ -75,12 +75,19 @@ class BotRunner:
             filters,
         )
 
-        app: Any = Application.builder().token(self._token).build()
+        builder = Application.builder().token(self._token)
+        builder.connect_timeout(10)
+        builder.read_timeout(10)
+        builder.write_timeout(10)
+        builder.media_write_timeout(30)
+        builder.get_updates_connect_timeout(10)
+        builder.get_updates_read_timeout(15)
+        app: Any = builder.build()
 
         h = self._handler
         app.add_handler(CommandHandler("help", h.cmd_help))
-        app.add_handler(CommandHandler("status", h.cmd_status))
-        app.add_handler(CommandHandler("snapshot", h.cmd_snapshot))
+        app.add_handler(CommandHandler("status", h.cmd_status, block=False))
+        app.add_handler(CommandHandler("snapshot", h.cmd_snapshot, block=False))
         app.add_handler(CommandHandler("pause", h.cmd_pause))
         app.add_handler(CommandHandler("resume", h.cmd_resume))
         app.add_handler(CommandHandler("stop", h.cmd_stop))
@@ -90,8 +97,8 @@ class BotRunner:
         app.add_handler(CallbackQueryHandler(h.handle_callback))
 
         # Reply keyboard TUI message handlers
-        app.add_handler(MessageHandler(filters.Text(["📊 Status"]), h.cmd_status))
-        app.add_handler(MessageHandler(filters.Text(["📸 Snapshot"]), h.cmd_snapshot))
+        app.add_handler(MessageHandler(filters.Text(["📊 Status"]), h.cmd_status, block=False))
+        app.add_handler(MessageHandler(filters.Text(["📸 Snapshot"]), h.cmd_snapshot, block=False))
         app.add_handler(MessageHandler(filters.Text(["⏸️ Pause"]), h.cmd_pause))
         app.add_handler(MessageHandler(filters.Text(["▶️ Resume"]), h.cmd_resume))
         app.add_handler(MessageHandler(filters.Text(["⏹️ Stop"]), h.cmd_stop))
