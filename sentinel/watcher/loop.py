@@ -733,6 +733,7 @@ class WatcherLoop:
 
         result: MlResult = await self._ml.detect(jpeg)
         if result.error:
+            self._confirm_count = 0
             self._ml_error_count += 1
             logger.warning("ML detection failed (%d consecutive times)", self._ml_error_count)
             if self._ml_error_count >= self._settings.ml_consecutive_failure_threshold:
