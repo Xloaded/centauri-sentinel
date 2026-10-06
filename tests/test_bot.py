@@ -764,3 +764,108 @@ async def test_callback_confirm_stop_photo_message() -> None:
     update.callback_query.edit_message_caption.assert_called_once()
     assert "cancelled" in update.callback_query.edit_message_caption.call_args[1]["caption"].lower()
     update.callback_query.edit_message_text.assert_not_called()
+
+async def test_ack_timeout_does_not_discard_controls():
+    from telegram.error import TimedOut
+    for action in ("resume", "stop", "snooze"):
+        handler = _make_handler()
+        handler._watcher.snooze = AsyncMock()
+        update = _make_update(callback_data=action)
+        update.callback_query.answer.side_effect = TimedOut()
+        await handler.handle_callback(update, None)
+        if action == "resume":
+            handler._printer.resume.assert_awaited_once()
+        elif action == "stop":
+            assert _AUTHORIZED_USER in handler._pending_stops
+            handler._printer.stop.assert_not_awaited()
+        else:
+            handler._watcher.snooze.assert_awaited_once()
+
+
+async def test_result_delivery_failure_does_not_report_resume_failure(caplog):
+    from telegram.error import TimedOut
+    handler = _make_handler()
+    update = _make_update(callback_data="resume")
+    update.callback_query.edit_message_text.side_effect = TimedOut()
+    await handler.handle_callback(update, None)
+    handler._printer.resume.assert_awaited_once()
+    assert "Resume failed via inline keyboard" not in caplog.text
+    assert "result delivery failed" in caplog.text
+
+
+async def test_status_photo_timeout_falls_back_to_text():
+    from telegram.error import TimedOut
+    handler = _make_handler()
+    update = _make_update()
+    update.message.reply_photo.side_effect = TimedOut()
+    await handler.cmd_status(update, None)
+    update.message.reply_text.assert_awaited_once()
+    assert "Chamber feed unavailable" not in update.message.reply_text.call_args.args[0]
+
+
+async def test_status_total_delivery_failure_is_contained():
+    from telegram.error import TimedOut
+    handler = _make_handler()
+    update = _make_update()
+    update.message.reply_photo.side_effect = TimedOut()
+    update.message.reply_text.side_effect = TimedOut()
+    await handler.cmd_status(update, None)
+
+
+async def test_callback_result_delivery_runs_outside_control_handler():
+    import asyncio
+    handler = _make_handler()
+    update = _make_update(callback_data="resume")
+    context = MagicMock()
+    tasks = []
+    context.application.create_task.side_effect = lambda coro: tasks.append(asyncio.create_task(coro))
+    gate = asyncio.Event()
+    async def edit(*args, **kwargs):
+        await gate.wait()
+    update.callback_query.edit_message_text.side_effect = edit
+    await asyncio.wait_for(handler.handle_callback(update, context), timeout=0.5)
+    handler._printer.resume.assert_awaited_once()
+    assert len(tasks) == 1
+    gate.set()
+    await asyncio.gather(*tasks)
+
+
+async def test_group_status_uses_addressed_keyboard():
+    handler = _make_handler()
+    update = _make_update(chat_id=-12345)
+    handler._notifier.is_authorized.side_effect = lambda cid, uid: cid == -12345 and uid == _AUTHORIZED_USER
+    update.effective_chat.type = "group"
+    update.get_bot.return_value.username = "ArdoSentinelBot"
+    await handler.cmd_status(update, None)
+    update.message.reply_photo.assert_awaited_once()
+    markup = update.message.reply_photo.await_args.kwargs["reply_markup"]
+    assert markup.keyboard[0][0].text == "/status@ArdoSentinelBot"
+    assert markup.keyboard[0][1].text == "/snapshot@ArdoSentinelBot"
+
+
+async def test_group_snapshot_uses_addressed_keyboard():
+    handler = _make_handler()
+    update = _make_update(chat_id=-12345)
+    handler._notifier.is_authorized.side_effect = lambda cid, uid: cid == -12345 and uid == _AUTHORIZED_USER
+    update.effective_chat.type = "supergroup"
+    update.get_bot.return_value.username = "ArdoSentinelBot"
+    await handler.cmd_snapshot(update, None)
+    update.message.reply_photo.assert_awaited_once()
+    assert update.message.reply_photo.await_args.kwargs["reply_markup"].keyboard[0][0].text == "/status@ArdoSentinelBot"
+
+
+async def test_group_unlisted_user_remains_denied():
+    handler = _make_handler()
+    update = _make_update(user_id=_OTHER_USER, chat_id=-12345)
+    update.effective_chat.type = "group"
+    await handler.cmd_status(update, None)
+    update.message.reply_photo.assert_not_awaited()
+    handler._camera.grab.assert_not_awaited()
+
+
+async def test_private_keyboard_remains_unchanged():
+    handler = _make_handler()
+    update = _make_update()
+    update.effective_chat.type = "private"
+    await handler.cmd_status(update, None)
+    assert update.message.reply_photo.await_args.kwargs["reply_markup"].keyboard[0][0].text == "📊 Status"

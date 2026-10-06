@@ -822,15 +822,15 @@ async def test_confirm_count_resets_on_camera_grab_exception() -> None:
     assert watcher.state == WatcherState.ARMED
 
 
-async def test_confirm_count_retained_on_ml_failure() -> None:
-    """If ML API call returns error=True, confirm_count must not be reset."""
+async def test_confirm_count_reset_on_ml_failure() -> None:
+    """An unavailable ML observation breaks consecutive confirmation."""
     watcher, _, _, ml, _ = await _make_watcher(printer_status=_printing_status())
     watcher._confirm_count = 2
 
     ml.detect = AsyncMock(return_value=MlResult(score=0.0, error=True))
     await watcher.tick()
 
-    assert watcher._confirm_count == 2
+    assert watcher._confirm_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -2598,3 +2598,34 @@ async def test_cleared_printer_exception_can_alert_again() -> None:
         "⚠️ Printer Error\n"
         "⚠️ Canvas: Feed Self-Check Timeout (1242)"
     )
+
+async def test_ml_error_breaks_positive_confirmation_streak():
+    watcher, printer, _, ml, _ = await _make_watcher(printer_status=_printing_status())
+    ml.detect.side_effect = [
+        MlResult(score=0.45), MlResult(score=0.45),
+        MlResult(score=0.0, error=True),
+        MlResult(score=0.45), MlResult(score=0.45), MlResult(score=0.45),
+    ]
+    for _ in range(5):
+        await watcher.tick()
+    printer.pause.assert_not_awaited()
+    await watcher.tick()
+    printer.pause.assert_awaited_once()
+
+
+@pytest.mark.parametrize("snooze_until, expected", [("1", "true"), ("0", "false")])
+async def test_startup_expired_snooze_vs_explicit_disable(snooze_until, expected):
+    """Exercise real startup recovery with only synthetic database settings."""
+    watcher, _, _, _, db = await _make_watcher()
+    await db.set_setting("detection_enabled", "false")
+    await db.set_setting("snooze_until_utc", snooze_until)
+    task = asyncio.create_task(watcher.run_forever())
+    try:
+        await asyncio.sleep(0.05)
+        assert await db.get_setting("detection_enabled") == expected
+        assert await db.get_setting("snooze_until_utc") == "0"
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await db.close()

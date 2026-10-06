@@ -162,9 +162,9 @@ async def test_bot_runner_all_handlers_added() -> None:
 
     with (
         patch("telegram.ext.Application") as mock_app_class,
-        patch("telegram.ext.CommandHandler", side_effect=lambda name, fn: (name, fn)),
+        patch("telegram.ext.CommandHandler", side_effect=lambda name, fn, **kwargs: (name, fn)),
         patch("telegram.ext.CallbackQueryHandler", side_effect=lambda fn: fn),
-        patch("telegram.ext.MessageHandler", side_effect=lambda filters, fn: (filters, fn)),
+        patch("telegram.ext.MessageHandler", side_effect=lambda filters, fn, **kwargs: (filters, fn)),
     ):
         mock_app_class.builder.return_value = builder
         runner = BotRunner(_SETTINGS_TG, handler)
@@ -389,3 +389,43 @@ async def test_bot_runner_supervisor_recovery_alert_on_first_crash() -> None:
     assert any("recovered" in m for m in messages), (
         f"expected recovery alert after first crash, got: {messages}"
     )
+
+
+async def test_status_handlers_do_not_block_control_updates():
+    from telegram.ext import CallbackQueryHandler, CommandHandler
+    app, builder = _make_ptb_app()
+    with patch("telegram.ext.Application") as cls:
+        cls.builder.return_value = builder
+        runner = BotRunner(_SETTINGS_TG, _make_handler())
+        await runner.start()
+        handlers = [c.args[0] for c in app.add_handler.call_args_list]
+        for h in handlers:
+            if isinstance(h, CommandHandler) and h.commands & {"status", "snapshot"}:
+                assert h.block is False
+            if isinstance(h, CallbackQueryHandler):
+                assert getattr(h.block, "value", h.block) is True
+        builder.connect_timeout.assert_called_once_with(10)
+        builder.get_updates_connect_timeout.assert_called_once_with(10)
+        await runner.stop()
+
+
+def test_real_group_command_handler_routes_addressed_commands():
+    from telegram import Bot, Update, User
+    from telegram.ext import CommandHandler
+    bot = Bot("123:fake")
+    bot._bot_user = User(id=123, is_bot=True, first_name="Sentinel", username="ArdoSentinelBot")
+    for command in ("status", "snapshot"):
+        handler = CommandHandler(command, AsyncMock())
+        for suffix, accepted in (("", True), ("@ArdoSentinelBot", True), ("@OtherBot", False)):
+            text = f"/{command}{suffix}"
+            update = Update.de_json({
+                "update_id": 1,
+                "message": {
+                    "message_id": 1, "date": 1,
+                    "chat": {"id": -12345, "type": "group", "title": "Test"},
+                    "from": {"id": 222222, "is_bot": False, "first_name": "Test"},
+                    "text": text,
+                    "entities": [{"type": "bot_command", "offset": 0, "length": len(text)}],
+                },
+            }, bot)
+            assert (handler.check_update(update) is not None and handler.check_update(update) is not False) == accepted

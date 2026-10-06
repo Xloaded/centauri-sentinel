@@ -1,0 +1,11 @@
+FROM python:3.12.8-slim
+RUN pip install --no-cache-dir uv==0.7.0
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --extra dev --no-install-project
+COPY sentinel/ ./sentinel/
+COPY tests/ ./tests/
+COPY Dockerfile docker-compose.yml README.md ./
+COPY docker/ ./docker/
+ENV PATH="/app/.venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+CMD ["python", "-m", "pytest", "-q"]

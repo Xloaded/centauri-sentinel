@@ -1,0 +1,4 @@
+# Prepared only; uses the retained verified pre-change image.
+services:
+  sentinel:
+    image: centauri-sentinel:pre-audit

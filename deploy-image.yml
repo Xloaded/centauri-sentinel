@@ -1,0 +1,4 @@
+# Prepared only; do not apply before approval and configuration verification.
+services:
+  sentinel:
+    image: centauri-sentinel:audit-fix

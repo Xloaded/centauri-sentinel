@@ -653,3 +653,15 @@ async def test_progress_failure_does_not_start_throttle() -> None:
         )
 
     assert notifier._progress_last_update == 0.0
+
+async def test_failed_chat_does_not_prevent_later_alerts():
+    from telegram.error import Forbidden
+    notifier, bot = _make_notifier_multi_chat()
+    async def send(**kwargs):
+        if kwargs["chat_id"] == "99":
+            raise Forbidden("blocked")
+    bot.send_message.side_effect = send
+    import pytest
+    with pytest.raises(Forbidden):
+        await notifier.send_text("test")
+    assert [c.kwargs["chat_id"] for c in bot.send_message.await_args_list] == ["99", "100", "101"]
