@@ -68,6 +68,25 @@ class BotCommandHandler:
     # Auth guard
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _reply_keyboard(update: Update) -> ReplyKeyboardMarkup:
+        """Address group keyboard commands so Telegram privacy mode delivers them."""
+        chat = update.effective_chat
+        if chat is not None and chat.type in ("group", "supergroup"):
+            username = update.get_bot().username
+            if isinstance(username, str) and username:
+                return ReplyKeyboardMarkup(
+                    [
+                        [KeyboardButton(f"/status@{username}"),
+                         KeyboardButton(f"/snapshot@{username}")],
+                        [KeyboardButton(f"/pause@{username}"),
+                         KeyboardButton(f"/resume@{username}")],
+                        [KeyboardButton(f"/stop@{username}")],
+                    ],
+                    resize_keyboard=True,
+                )
+        return _TUI_KEYBOARD
+
     def _authorized(self, update: Update) -> bool:
         # Clean up expired pending stop requests to prevent memory leaks (M10)
         now = time.monotonic()
@@ -93,6 +112,12 @@ class BotCommandHandler:
             return False
 
         authorized = self._notifier.is_authorized(chat_id, user.id)
+        chat = update.effective_chat
+        logger.info(
+            "Telegram interaction received: chat_type=%s authorized=%s anonymous_sender=%s",
+            getattr(chat, "type", "unknown"), authorized,
+            bool(update.message and update.message.sender_chat),
+        )
         if not authorized:
             logger.warning(
                 "Unauthorized Telegram interaction — chat=%s user=%s",
@@ -122,7 +147,7 @@ class BotCommandHandler:
             if update.message is not None:
                 await update.message.reply_text(
                     "⚠️ Slow down! Maximum 5 commands per minute allowed.",
-                    reply_markup=_TUI_KEYBOARD,
+                    reply_markup=self._reply_keyboard(update),
                 )
             elif update.callback_query is not None:
                 await update.callback_query.answer(
@@ -154,7 +179,7 @@ class BotCommandHandler:
             "/enable — enable failure detection\n"
             "/disable — disable failure detection\n"
             "/help — this message",
-            reply_markup=_TUI_KEYBOARD,
+            reply_markup=self._reply_keyboard(update),
         )
 
     async def cmd_status(self, update: Update, context: Any) -> None:
@@ -187,7 +212,7 @@ class BotCommandHandler:
         try:
             if jpeg is not None:
                 await update.message.reply_photo(
-                    photo=jpeg, caption=caption, reply_markup=_TUI_KEYBOARD,
+                    photo=jpeg, caption=caption, reply_markup=self._reply_keyboard(update),
                     connect_timeout=10, read_timeout=10, write_timeout=30,
                 )
                 return
@@ -195,7 +220,7 @@ class BotCommandHandler:
             logger.exception("Telegram status photo delivery failed")
         try:
             await update.message.reply_text(
-                caption, reply_markup=_TUI_KEYBOARD,
+                caption, reply_markup=self._reply_keyboard(update),
                 connect_timeout=10, read_timeout=10, write_timeout=10,
             )
         except TelegramError:
@@ -209,10 +234,10 @@ class BotCommandHandler:
         assert update.message is not None
         try:
             jpeg = await self._camera.grab()
-            await update.message.reply_photo(photo=jpeg, reply_markup=_TUI_KEYBOARD)
+            await update.message.reply_photo(photo=jpeg, reply_markup=self._reply_keyboard(update))
         except Exception:
             logger.exception("Failed to grab snapshot for Telegram")
-            await update.message.reply_text("Camera unavailable.", reply_markup=_TUI_KEYBOARD)
+            await update.message.reply_text("Camera unavailable.", reply_markup=self._reply_keyboard(update))
 
     async def cmd_pause(self, update: Update, context: Any) -> None:
         if not self._authorized(update):
@@ -231,7 +256,7 @@ class BotCommandHandler:
                 if live.print_state == "paused":
                     await self._db.record_pause(source="telegram", result="ok")
                     await self._watcher.get_fresh_status(force=True)
-                    await update.message.reply_text("Print paused.", reply_markup=_TUI_KEYBOARD)
+                    await update.message.reply_text("Print paused.", reply_markup=self._reply_keyboard(update))
                     return
             except Exception:
                 pass
@@ -243,19 +268,19 @@ class BotCommandHandler:
             await update.message.reply_text(
                 "Pause request suppressed — a pause was already sent recently. "
                 "If the printer is still printing, please try /pause again in a moment.",
-                reply_markup=_TUI_KEYBOARD,
+                reply_markup=self._reply_keyboard(update),
             )
             return
         except Exception as exc:
             logger.exception("Pause failed via Telegram command")
             await self._db.record_pause(source="telegram", result="error", error_message=str(exc))
             await update.message.reply_text(
-                "Pause failed — check the printer.", reply_markup=_TUI_KEYBOARD
+                "Pause failed — check the printer.", reply_markup=self._reply_keyboard(update)
             )
             return
         await self._db.record_pause(source="telegram", result="ok")
         await self._watcher.get_fresh_status(force=True)
-        await update.message.reply_text("Print paused.", reply_markup=_TUI_KEYBOARD)
+        await update.message.reply_text("Print paused.", reply_markup=self._reply_keyboard(update))
 
     async def cmd_resume(self, update: Update, context: Any) -> None:
         if not self._authorized(update):
@@ -269,11 +294,11 @@ class BotCommandHandler:
                 WatcherState.ARMED, from_states=(WatcherState.PAUSED, WatcherState.STALLED)
             )
             await self._watcher.get_fresh_status(force=True)
-            await update.message.reply_text("Print resumed.", reply_markup=_TUI_KEYBOARD)
+            await update.message.reply_text("Print resumed.", reply_markup=self._reply_keyboard(update))
         except Exception:
             logger.exception("Resume failed via Telegram command")
             await update.message.reply_text(
-                "Resume failed — check the printer.", reply_markup=_TUI_KEYBOARD
+                "Resume failed — check the printer.", reply_markup=self._reply_keyboard(update)
             )
 
     async def cmd_stop(self, update: Update, context: Any) -> None:
@@ -286,7 +311,7 @@ class BotCommandHandler:
         assert user is not None
         self._pending_stops[user.id] = time.monotonic()
         await update.message.reply_text(
-            "Reply /confirm within 30 s to cancel the print.", reply_markup=_TUI_KEYBOARD
+            "Reply /confirm within 30 s to cancel the print.", reply_markup=self._reply_keyboard(update)
         )
 
     async def cmd_confirm(self, update: Update, context: Any) -> None:
@@ -303,7 +328,7 @@ class BotCommandHandler:
             self._pending_stops.pop(user.id, None)
             await update.message.reply_text(
                 "No active /stop request (or it expired). Use /stop first.",
-                reply_markup=_TUI_KEYBOARD,
+                reply_markup=self._reply_keyboard(update),
             )
             return
 
@@ -311,11 +336,11 @@ class BotCommandHandler:
         try:
             await self._printer.stop()
             await self._watcher.get_fresh_status(force=True)
-            await update.message.reply_text("Print cancelled.", reply_markup=_TUI_KEYBOARD)
+            await update.message.reply_text("Print cancelled.", reply_markup=self._reply_keyboard(update))
         except Exception:
             logger.exception("Stop failed via Telegram /confirm")
             await update.message.reply_text(
-                "Stop failed — check the printer.", reply_markup=_TUI_KEYBOARD
+                "Stop failed — check the printer.", reply_markup=self._reply_keyboard(update)
             )
 
     async def cmd_enable(self, update: Update, context: Any) -> None:
@@ -327,7 +352,7 @@ class BotCommandHandler:
         self._watcher.cancel_snooze()
         await self._db.set_setting("snooze_until_utc", "0")
         await self._db.set_setting("detection_enabled", "true")
-        await update.message.reply_text("Failure detection enabled.", reply_markup=_TUI_KEYBOARD)
+        await update.message.reply_text("Failure detection enabled.", reply_markup=self._reply_keyboard(update))
 
     async def cmd_disable(self, update: Update, context: Any) -> None:
         if not self._authorized(update):
@@ -338,7 +363,7 @@ class BotCommandHandler:
         self._watcher.cancel_snooze()
         await self._db.set_setting("snooze_until_utc", "0")
         await self._db.set_setting("detection_enabled", "false")
-        await update.message.reply_text("Failure detection disabled.", reply_markup=_TUI_KEYBOARD)
+        await update.message.reply_text("Failure detection disabled.", reply_markup=self._reply_keyboard(update))
 
     # ------------------------------------------------------------------
     # Inline keyboard callbacks

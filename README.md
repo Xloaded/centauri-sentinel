@@ -456,3 +456,12 @@ MIT — see [LICENSE](LICENSE).
 ### Third-party license acknowledgements
 
 The `obico-ml` container is derived from the [Obico Server](https://github.com/TheSpaghettiDetective/obico-server) project, which is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). In accordance with the AGPL-3.0, the source code of the modified `ml_api` service is made available in this repository under the `docker/obico-ml/` directory.
+
+
+## Sentinel reliability investigation
+
+See [Telegram reliability](TELEGRAM_RELIABILITY.md),
+[ML confirmation](ML_CONFIRMATION.md), and the
+[deployment and investigation record](INVESTIGATION_FIXES.md) for regression
+coverage, deployed versus undeployed changes, Snooze recovery findings, and
+configuration-preserving deployment/rollback considerations.

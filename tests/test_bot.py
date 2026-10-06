@@ -828,3 +828,44 @@ async def test_callback_result_delivery_runs_outside_control_handler():
     assert len(tasks) == 1
     gate.set()
     await asyncio.gather(*tasks)
+
+
+async def test_group_status_uses_addressed_keyboard():
+    handler = _make_handler()
+    update = _make_update(chat_id=-12345)
+    handler._notifier.is_authorized.side_effect = lambda cid, uid: cid == -12345 and uid == _AUTHORIZED_USER
+    update.effective_chat.type = "group"
+    update.get_bot.return_value.username = "ArdoSentinelBot"
+    await handler.cmd_status(update, None)
+    update.message.reply_photo.assert_awaited_once()
+    markup = update.message.reply_photo.await_args.kwargs["reply_markup"]
+    assert markup.keyboard[0][0].text == "/status@ArdoSentinelBot"
+    assert markup.keyboard[0][1].text == "/snapshot@ArdoSentinelBot"
+
+
+async def test_group_snapshot_uses_addressed_keyboard():
+    handler = _make_handler()
+    update = _make_update(chat_id=-12345)
+    handler._notifier.is_authorized.side_effect = lambda cid, uid: cid == -12345 and uid == _AUTHORIZED_USER
+    update.effective_chat.type = "supergroup"
+    update.get_bot.return_value.username = "ArdoSentinelBot"
+    await handler.cmd_snapshot(update, None)
+    update.message.reply_photo.assert_awaited_once()
+    assert update.message.reply_photo.await_args.kwargs["reply_markup"].keyboard[0][0].text == "/status@ArdoSentinelBot"
+
+
+async def test_group_unlisted_user_remains_denied():
+    handler = _make_handler()
+    update = _make_update(user_id=_OTHER_USER, chat_id=-12345)
+    update.effective_chat.type = "group"
+    await handler.cmd_status(update, None)
+    update.message.reply_photo.assert_not_awaited()
+    handler._camera.grab.assert_not_awaited()
+
+
+async def test_private_keyboard_remains_unchanged():
+    handler = _make_handler()
+    update = _make_update()
+    update.effective_chat.type = "private"
+    await handler.cmd_status(update, None)
+    assert update.message.reply_photo.await_args.kwargs["reply_markup"].keyboard[0][0].text == "📊 Status"

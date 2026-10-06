@@ -407,3 +407,25 @@ async def test_status_handlers_do_not_block_control_updates():
         builder.connect_timeout.assert_called_once_with(10)
         builder.get_updates_connect_timeout.assert_called_once_with(10)
         await runner.stop()
+
+
+def test_real_group_command_handler_routes_addressed_commands():
+    from telegram import Bot, Update, User
+    from telegram.ext import CommandHandler
+    bot = Bot("123:fake")
+    bot._bot_user = User(id=123, is_bot=True, first_name="Sentinel", username="ArdoSentinelBot")
+    for command in ("status", "snapshot"):
+        handler = CommandHandler(command, AsyncMock())
+        for suffix, accepted in (("", True), ("@ArdoSentinelBot", True), ("@OtherBot", False)):
+            text = f"/{command}{suffix}"
+            update = Update.de_json({
+                "update_id": 1,
+                "message": {
+                    "message_id": 1, "date": 1,
+                    "chat": {"id": -12345, "type": "group", "title": "Test"},
+                    "from": {"id": 222222, "is_bot": False, "first_name": "Test"},
+                    "text": text,
+                    "entities": [{"type": "bot_command", "offset": 0, "length": len(text)}],
+                },
+            }, bot)
+            assert (handler.check_update(update) is not None and handler.check_update(update) is not False) == accepted

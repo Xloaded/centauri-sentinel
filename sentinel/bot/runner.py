@@ -105,6 +105,12 @@ class BotRunner:
 
         self._app = app
         await app.initialize()
+        if getattr(app.bot.bot, "can_read_all_group_messages", None) is False:
+            logger.info(
+                "Telegram group privacy mode enabled: use /status@%s and /snapshot@%s; "
+                "plain keyboard text may not be delivered",
+                app.bot.username, app.bot.username,
+            )
         await app.start()
         await app.updater.start_polling()
         logger.info("Telegram bot polling started")
