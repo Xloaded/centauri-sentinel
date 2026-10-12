@@ -473,17 +473,18 @@ async def test_auth_enabled_rejects_wrong_password(auth_app: object) -> None:
 
 async def test_auth_enabled_accepts_valid_credentials(auth_app: object) -> None:
     async with _client(auth_app) as c:
-        # First request with Basic auth returns a redirect + sets cookie
+        # Basic auth serves the resource immediately and sets a cookie
         r = await c.get("/", auth=("admin", "testpass"), follow_redirects=False)
-    assert r.status_code == 302
+    assert r.status_code == 200
     assert "sentinel_session" in r.headers.get("set-cookie", "")
 
 
 async def test_auth_enabled_accepts_valid_credentials_preserves_query(auth_app: object) -> None:
     async with _client(auth_app) as c:
         r = await c.get("/?foo=bar&baz=qux", auth=("admin", "testpass"), follow_redirects=False)
-    assert r.status_code == 302
-    assert r.headers.get("location") == "/?foo=bar&baz=qux"
+    assert r.status_code == 200
+    assert r.request.url.query == b"foo=bar&baz=qux"
+    assert "location" not in r.headers
 
 
 async def test_auth_cookie_secure_options(
@@ -2297,3 +2298,12 @@ async def test_post_settings_ipv6_printer_ip_brackets_camera_url(
     mock_db.set_setting.assert_any_call("printer_ip", "fd00::10")
     printer.reconfigure.assert_called_once_with("fd00::10")
     mock_camera.reconfigure.assert_called_once_with("http://[fd00::10]:8080/mjpeg")
+
+
+async def test_repeated_valid_basic_auth_does_not_exhaust_attempts(auth_app: object) -> None:
+    async with _client(auth_app) as c:
+        for _ in range(12):
+            c.cookies.clear()
+            response = await c.get("/", auth=("admin", "testpass"), follow_redirects=False)
+            assert response.status_code == 200
+            assert "sentinel_session" in response.headers.get("set-cookie", "")
