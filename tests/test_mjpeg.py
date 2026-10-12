@@ -663,3 +663,17 @@ async def test_stream_proxy_internal_brackets_resolved_ipv6() -> None:
     assert frame == _JPEG
     fetched_url = mock_client.stream.call_args.args[1]
     assert fetched_url == "http://[fd00::1234]:8080/mjpeg"
+
+
+async def test_explicit_camera_url_overrides_printer_endpoint() -> None:
+    settings = Settings(printer_ip="127.0.0.1", camera_url="http://127.0.0.1:9999/stream")
+    camera = MjpegGrabber(settings)
+    assert camera._url == settings.camera_url
+    await camera.close()
+
+
+async def test_empty_camera_url_preserves_default_endpoint() -> None:
+    settings = Settings(printer_ip="127.0.0.1", camera_url="")
+    camera = MjpegGrabber(settings)
+    assert camera._url == f"http://127.0.0.1:{settings.printer_mjpeg_port}{settings.printer_mjpeg_path}"
+    await camera.close()
