@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     printer_mqtt_port: int = 1883
     printer_mjpeg_port: int = 8080
     printer_mjpeg_path: str = "/mjpeg"
+    camera_url: str = ""
 
     # ML
     # WARNING: When ml_api_token_file is used, transmitting bearer tokens

@@ -59,7 +59,7 @@ class MjpegGrabber:
         host = _format_host_for_url(settings.printer_ip)
         url = f"http://{host}:{settings.printer_mjpeg_port}{settings.printer_mjpeg_path}"
         self._settings = settings
-        self._url = url
+        self._url = settings.camera_url or url
         self._consecutive_failures = 0
         self._last_success: datetime | None = None
         self._client = httpx.AsyncClient(
@@ -356,6 +356,8 @@ class MjpegGrabber:
         """Cancel the broadcaster task and clean up listeners."""
         if self._broadcaster_task and not self._broadcaster_task.done():
             self._broadcaster_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._broadcaster_task
         self._broadcaster_task = None
         from sentinel.camera.errors import CameraClosedError
 

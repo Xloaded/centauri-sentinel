@@ -504,7 +504,7 @@ def make_router(
                     f"{settings.printer_mjpeg_port}{settings.printer_mjpeg_path}"
                 )
                 if hasattr(camera, "reconfigure"):
-                    await camera.reconfigure(new_camera_url)
+                    await camera.reconfigure(settings.camera_url or new_camera_url)
                 if hasattr(watcher.printer, "reconfigure"):
                     await watcher.printer.reconfigure(printer_ip)
 
