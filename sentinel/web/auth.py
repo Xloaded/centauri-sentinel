@@ -4,7 +4,7 @@ If auth_enabled=False the middleware is a no-op pass-through.
 If auth_enabled=True:
   - A valid ``sentinel_session`` cookie (HMAC-SHA256, 1 h TTL) passes through.
   - Otherwise challenge with WWW-Authenticate: Basic.
-  - Successful Basic credentials set the cookie and redirect to the same URL.
+  - Successful Basic credentials set the cookie and serve the requested resource.
 
 Internal routes (/__internal_snapshot/*) are always exempt.
 
@@ -40,7 +40,7 @@ import bcrypt
 from starlette.responses import Response
 
 if TYPE_CHECKING:
-    from starlette.types import ASGIApp, Receive, Scope, Send
+    from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
     from sentinel.config import Settings
 
@@ -239,6 +239,7 @@ class AuthMiddleware:
                     self._auth_attempts.popitem(last=False)
 
                 if await self._check_credentials(username, password):
+                    self._auth_attempts.pop(client_ip, None)
                     cookie = self._make_cookie(user_agent)
                     if self._auth_cookie_secure == "always":
                         is_secure = True
@@ -360,31 +361,22 @@ class AuthMiddleware:
                     is_secure = scheme == "https" or proto == "https"
                 secure_flag = "; Secure" if is_secure else ""
 
-                query_string = scope.get("query_string", b"").decode()
-
-                # Prevent open redirects: ensure path starts with a single slash,
-                # and doesn't use scheme-relative URLs (//) or backslashes (\).
-                safe_path = "/"
-                if (
-                    path.startswith("/")
-                    and not path.startswith("//")
-                    and not path.startswith("/\\")
-                ):
-                    safe_path = path
-
-                redirect_url = f"{safe_path}?{query_string}" if query_string else safe_path
-
-                response = Response(
-                    status_code=302,
-                    headers={
-                        "Location": redirect_url,
-                        "Set-Cookie": (
-                            f"{_COOKIE_NAME}={cookie}; Path=/; HttpOnly; "
-                            f"SameSite=Strict{secure_flag}; Max-Age={_TTL}"
-                        ),
-                    },
+                self._auth_attempts.pop(client_ip, None)
+                cookie_value = (
+                    f"{_COOKIE_NAME}={cookie}; Path=/; HttpOnly; "
+                    f"SameSite=Strict{secure_flag}; Max-Age={_TTL}"
                 )
-                await response(scope, receive, send)
+
+                async def send_with_cookie(message: Message) -> None:
+                    if message["type"] == "http.response.start":
+                        message = dict(message)
+                        message["headers"] = [
+                            *message.get("headers", []),
+                            (b"set-cookie", cookie_value.encode()),
+                        ]
+                    await send(message)
+
+                await self._app(scope, receive, send_with_cookie)
                 return
             else:
                 await asyncio.sleep(0.5)
