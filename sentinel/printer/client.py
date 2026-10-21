@@ -341,6 +341,7 @@ class PrinterClient:
         self._listener_task: asyncio.Task[None] | None = None
         self._state_lock = asyncio.Lock()
         self._last_update_time: float = 0.0
+        self._last_print_status_time = 0.0
         self._terminal_status: PrinterStatus | None = None
         self.malformed_messages_count: int = 0
         self._stop_pending: bool = False
@@ -349,6 +350,12 @@ class PrinterClient:
         self._cmd_client_id = f"{self._client_id}-cmd"
         # Monotonic per-command id used to match api_response acks to requests.
         self._request_counter: int = 0
+
+    def _record_print_status(self, content: dict[str, Any]) -> None:
+        """Only explicit state packets can confirm a control action."""
+        print_status = content.get("print_status")
+        if isinstance(print_status, dict) and "state" in print_status:
+            self._last_print_status_time = time.monotonic()
 
     def _next_request_id(self) -> int:
         """Return the next command id (monotonic, for ack matching)."""
@@ -512,7 +519,9 @@ class PrinterClient:
             raise PrinterTimeoutError("Status request timed out")
 
         async with self._state_lock:
-            return _parse_status(self._accumulated_data, self._file_layers_cache)
+            status = _parse_status(self._accumulated_data, self._file_layers_cache)
+            status.received_at_monotonic = self._last_print_status_time
+            return status
 
     async def _listen_loop(self) -> None:
         """Background loop that maintains a persistent registered MQTT connection."""
@@ -597,6 +606,7 @@ class PrinterClient:
                             self._accumulated_data["method"] = METHOD_STATUS_PUSH
                             _deep_merge(self._accumulated_data["result"], content)
                             _deep_merge(self._accumulated_data["data"], content)
+                            self._record_print_status(content)
                             self._last_update_time = time.monotonic()
 
                     async with asyncio.timeout(10.0):
@@ -642,6 +652,7 @@ class PrinterClient:
                                     _deep_merge(
                                         self._accumulated_data["data"], content
                                     )
+                                    self._record_print_status(content)
                                     self._last_update_time = time.monotonic()
 
                     logger.info(
@@ -808,6 +819,7 @@ class PrinterClient:
                                             content,
                                         )
 
+                                        self._record_print_status(content)
                                         self._last_update_time = (
                                             time.monotonic()
                                         )
@@ -977,6 +989,8 @@ class PrinterClient:
                                 for k, v in payload.items():
                                     if k not in ("result", "data"):
                                         self._accumulated_data[k] = v
+
+                                self._record_print_status(content)
 
                                 self._last_update_time = time.monotonic()
 

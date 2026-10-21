@@ -273,3 +273,15 @@ async def test_dispatcher_errors_and_cleanup() -> None:
     dispatcher.dispatch_text("hello")
     # This should have cleaned up the done task from _tasks
     assert task not in dispatcher._tasks
+
+
+async def test_resume_broadcast_routes_telegram_exclusions_and_other_channels():
+    telegram = MagicMock(spec=["send_resume_confirmed"])
+    telegram.send_resume_confirmed = AsyncMock()
+    other = MagicMock(spec=["send_text"])
+    other.send_text = AsyncMock()
+    dispatcher = NotificationDispatcher([telegram, other])
+    dispatcher.dispatch_resume_confirmed("Print resumed.", frozenset({"99"}))
+    await asyncio.gather(*list(dispatcher._tasks))
+    telegram.send_resume_confirmed.assert_awaited_once_with("Print resumed.", frozenset({"99"}))
+    other.send_text.assert_awaited_once_with("Print resumed.")

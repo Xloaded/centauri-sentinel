@@ -94,14 +94,17 @@ class BotRunner:
         app.add_handler(CommandHandler("confirm", h.cmd_confirm))
         app.add_handler(CommandHandler("enable", h.cmd_enable))
         app.add_handler(CommandHandler("disable", h.cmd_disable))
+        app.add_handler(CommandHandler("detection", h.cmd_detection))
         app.add_handler(CallbackQueryHandler(h.handle_callback))
 
         # Reply keyboard TUI message handlers
         app.add_handler(MessageHandler(filters.Text(["📊 Status"]), h.cmd_status, block=False))
         app.add_handler(MessageHandler(filters.Text(["📸 Snapshot"]), h.cmd_snapshot, block=False))
         app.add_handler(MessageHandler(filters.Text(["⏸️ Pause"]), h.cmd_pause))
-        app.add_handler(MessageHandler(filters.Text(["▶️ Resume"]), h.cmd_resume))
+        app.add_handler(MessageHandler(filters.Text(["▶️ Resume", "▶️ Resume print"]), h.cmd_resume))
         app.add_handler(MessageHandler(filters.Text(["⏹️ Stop"]), h.cmd_stop))
+
+        app.add_handler(MessageHandler(filters.Text(["🛡 Detection"]), h.cmd_detection))
 
         self._app = app
         await app.initialize()
@@ -109,7 +112,8 @@ class BotRunner:
             logger.info(
                 "Telegram group privacy mode enabled: use /status@%s and /snapshot@%s; "
                 "plain keyboard text may not be delivered",
-                app.bot.username, app.bot.username,
+                app.bot.username,
+                app.bot.username,
             )
         await app.start()
         await app.updater.start_polling()

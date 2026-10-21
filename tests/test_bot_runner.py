@@ -38,6 +38,7 @@ def _make_handler() -> MagicMock:
         "cmd_confirm",
         "cmd_enable",
         "cmd_disable",
+        "cmd_detection",
         "handle_callback",
     ):
         setattr(h, cmd, AsyncMock())
@@ -164,14 +165,16 @@ async def test_bot_runner_all_handlers_added() -> None:
         patch("telegram.ext.Application") as mock_app_class,
         patch("telegram.ext.CommandHandler", side_effect=lambda name, fn, **kwargs: (name, fn)),
         patch("telegram.ext.CallbackQueryHandler", side_effect=lambda fn: fn),
-        patch("telegram.ext.MessageHandler", side_effect=lambda filters, fn, **kwargs: (filters, fn)),
+        patch(
+            "telegram.ext.MessageHandler", side_effect=lambda filters, fn, **kwargs: (filters, fn)
+        ),
     ):
         mock_app_class.builder.return_value = builder
         runner = BotRunner(_SETTINGS_TG, handler)
         await runner.start()
 
     # add_handler should be called 15 times (9 commands + 1 callback + 5 message text filters)
-    assert app.add_handler.call_count == 15
+    assert app.add_handler.call_count == 17
 
 
 async def test_bot_runner_stop_times_out() -> None:
@@ -393,6 +396,7 @@ async def test_bot_runner_supervisor_recovery_alert_on_first_crash() -> None:
 
 async def test_status_handlers_do_not_block_control_updates():
     from telegram.ext import CallbackQueryHandler, CommandHandler
+
     app, builder = _make_ptb_app()
     with patch("telegram.ext.Application") as cls:
         cls.builder.return_value = builder
@@ -412,20 +416,61 @@ async def test_status_handlers_do_not_block_control_updates():
 def test_real_group_command_handler_routes_addressed_commands():
     from telegram import Bot, Update, User
     from telegram.ext import CommandHandler
+
     bot = Bot("123:fake")
     bot._bot_user = User(id=123, is_bot=True, first_name="Sentinel", username="ArdoSentinelBot")
     for command in ("status", "snapshot"):
         handler = CommandHandler(command, AsyncMock())
         for suffix, accepted in (("", True), ("@ArdoSentinelBot", True), ("@OtherBot", False)):
             text = f"/{command}{suffix}"
-            update = Update.de_json({
-                "update_id": 1,
-                "message": {
-                    "message_id": 1, "date": 1,
-                    "chat": {"id": -12345, "type": "group", "title": "Test"},
-                    "from": {"id": 222222, "is_bot": False, "first_name": "Test"},
-                    "text": text,
-                    "entities": [{"type": "bot_command", "offset": 0, "length": len(text)}],
+            update = Update.de_json(
+                {
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 1,
+                        "date": 1,
+                        "chat": {"id": -12345, "type": "group", "title": "Test"},
+                        "from": {"id": 222222, "is_bot": False, "first_name": "Test"},
+                        "text": text,
+                        "entities": [{"type": "bot_command", "offset": 0, "length": len(text)}],
+                    },
                 },
-            }, bot)
-            assert (handler.check_update(update) is not None and handler.check_update(update) is not False) == accepted
+                bot,
+            )
+            assert (
+                handler.check_update(update) is not None
+                and handler.check_update(update) is not False
+            ) == accepted
+
+
+def test_every_group_keyboard_button_is_routed_to_this_bot():
+    from telegram import Bot, Update, User
+    from telegram.ext import CommandHandler
+
+    from sentinel.bot.keyboards import group_command_keyboard
+
+    bot = Bot("123:fake")
+    bot._bot_user = User(id=123, is_bot=True, first_name="Sentinel", username="TestSentinelBot")
+    commands = {"status", "snapshot", "pause", "resume", "stop", "detection"}
+    routed = set()
+    for row in group_command_keyboard(bot.username).keyboard:
+        for button in row:
+            text = button.text
+            command = text.split("@", 1)[0][1:]
+            update = Update.de_json(
+                {
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 1,
+                        "date": 1,
+                        "chat": {"id": -12345, "type": "supergroup", "title": "Test"},
+                        "from": {"id": 222222, "is_bot": False, "first_name": "Test"},
+                        "text": text,
+                        "entities": [{"type": "bot_command", "offset": 0, "length": len(text)}],
+                    },
+                },
+                bot,
+            )
+            assert CommandHandler(command, AsyncMock()).check_update(update)
+            routed.add(command)
+    assert routed == commands

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from sentinel.bot.commands import BotCommandHandler
 from sentinel.config import Settings
@@ -12,7 +15,7 @@ from sentinel.printer.errors import PauseDebouncedError
 from sentinel.watcher.state import WatcherState
 
 if TYPE_CHECKING:
-    import pytest
+    pass
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -22,6 +25,45 @@ _AUTHORIZED_CHAT = 111111
 _AUTHORIZED_USER = 222222
 _OTHER_USER = 999999
 _OTHER_CHAT = 888888
+_HANDLERS = []
+
+
+@pytest.fixture(autouse=True)
+async def _cleanup_resume_tasks():
+    yield
+    for handler in _HANDLERS:
+        for task in handler._resume_deliveries.values():
+            if isinstance(task, asyncio.Task):
+                task.cancel()
+        await handler._watcher.resume_control.close()
+        await asyncio.gather(
+            *(
+                task
+                for task in handler._resume_deliveries.values()
+                if isinstance(task, asyncio.Task)
+            ),
+            return_exceptions=True,
+        )
+    _HANDLERS.clear()
+
+
+async def _confirm_resume(handler):
+    from sentinel.printer.types import PrinterStatus
+
+    op = handler._watcher.resume_control.operation
+    status = PrinterStatus(
+        True,
+        100,
+        1,
+        10,
+        op.filename,
+        print_state="printing",
+        received_at_monotonic=time.monotonic(),
+    )
+    handler._watcher.resume_control.observe(status)
+    await asyncio.gather(
+        *(task for task in handler._resume_deliveries.values() if isinstance(task, asyncio.Task))
+    )
 
 
 def _settings(
@@ -100,7 +142,10 @@ def _make_handler(
 
     watcher.external_transition = AsyncMock(side_effect=_external_transition_impl)
 
-    return BotCommandHandler(
+    from sentinel.printer.resume import ResumeCoordinator
+
+    watcher.resume_control = ResumeCoordinator(printer, timeout=0.2)
+    handler = BotCommandHandler(
         _settings(),
         printer,
         camera,
@@ -109,6 +154,8 @@ def _make_handler(
         notifier,
         snooze_seconds=snooze_seconds,
     )
+    _HANDLERS.append(handler)
+    return handler
 
 
 def _make_update(
@@ -262,9 +309,10 @@ async def test_cmd_resume_calls_printer() -> None:
     handler._watcher.state = WatcherState.PAUSED
     update = _make_update()
     await handler.cmd_resume(update, None)
+    await _confirm_resume(handler)
     printer.resume.assert_called_once()
     assert handler._watcher.state == WatcherState.ARMED
-    update.message.reply_text.assert_called_once()
+    assert update.message.reply_text.call_count == 2
     assert "resumed" in update.message.reply_text.call_args[0][0].lower()
 
 
@@ -276,6 +324,7 @@ async def test_cmd_resume_uses_external_transition() -> None:
     handler._watcher.state = WatcherState.PAUSED
     update = _make_update()
     await handler.cmd_resume(update, None)
+    await _confirm_resume(handler)
     handler._watcher.external_transition.assert_called_once_with(
         WatcherState.ARMED, from_states=(WatcherState.PAUSED, WatcherState.STALLED)
     )
@@ -290,16 +339,20 @@ async def test_cmd_resume_from_stalled_transitions_to_armed() -> None:
     handler._watcher.state = WatcherState.STALLED
     update = _make_update()
     await handler.cmd_resume(update, None)
+    await _confirm_resume(handler)
     assert handler._watcher.state == WatcherState.ARMED
 
 
-async def test_cmd_resume_calls_get_fresh_status_forced() -> None:
-    printer = AsyncMock()
-    handler = _make_handler(printer=printer)
+async def test_cmd_resume_waits_for_observed_status() -> None:
+    handler = _make_handler()
     handler._watcher.state = WatcherState.PAUSED
     update = _make_update()
     await handler.cmd_resume(update, None)
-    handler._watcher.get_fresh_status.assert_called_once_with(force=True)
+    assert handler._watcher.state == WatcherState.PAUSED
+    handler._watcher.external_transition.assert_not_awaited()
+    assert "waiting for printer confirmation" in update.message.reply_text.call_args.args[0]
+    await _confirm_resume(handler)
+    assert handler._watcher.state == WatcherState.ARMED
 
 
 async def test_cmd_pause_failure_replies_error() -> None:
@@ -414,9 +467,10 @@ async def test_callback_resume_calls_printer() -> None:
     handler._watcher.state = WatcherState.PAUSED
     update = _make_update(callback_data="resume")
     await handler.handle_callback(update, None)
+    await _confirm_resume(handler)
     printer.resume.assert_called_once()
     assert handler._watcher.state == WatcherState.ARMED
-    update.callback_query.edit_message_text.assert_called_once()
+    assert update.callback_query.edit_message_text.call_count == 2
     assert "resumed" in update.callback_query.edit_message_text.call_args[0][0].lower()
 
 
@@ -430,10 +484,11 @@ async def test_callback_resume_uses_external_transition_and_refreshes_status() -
     handler._watcher.state = WatcherState.PAUSED
     update = _make_update(callback_data="resume")
     await handler.handle_callback(update, None)
+    await _confirm_resume(handler)
     handler._watcher.external_transition.assert_called_once_with(
         WatcherState.ARMED, from_states=(WatcherState.PAUSED, WatcherState.STALLED)
     )
-    handler._watcher.get_fresh_status.assert_called_once_with(force=True)
+    assert handler._watcher.resume_control.operation.result.result() is True
 
 
 async def test_callback_stop_sets_pending() -> None:
@@ -554,7 +609,12 @@ async def test_callback_resume_failure_edits_text() -> None:
     update = _make_update(callback_data="resume")
     await handler.handle_callback(update, None)
     update.callback_query.edit_message_text.assert_called_once()
-    assert "failed" in update.callback_query.edit_message_text.call_args[0][0].lower()
+    assert (
+        "waiting for printer confirmation"
+        in update.callback_query.edit_message_text.call_args[0][0].lower()
+    )
+    await _confirm_resume(handler)
+    assert "confirmed by printer" in update.callback_query.edit_message_text.call_args[0][0].lower()
 
 
 async def test_cmd_pause_debounced_printer_not_paused() -> None:
@@ -611,7 +671,9 @@ async def test_cmd_resume_failure() -> None:
     update = _make_update()
     await handler.cmd_resume(update, None)
     update.message.reply_text.assert_called_once()
-    assert "failed" in update.message.reply_text.call_args[0][0].lower()
+    assert "waiting for printer confirmation" in update.message.reply_text.call_args[0][0].lower()
+    await _confirm_resume(handler)
+    assert "confirmed by printer" in update.message.reply_text.call_args[0][0].lower()
 
 
 async def test_unauthorized_all_commands() -> None:
@@ -738,8 +800,9 @@ async def test_callback_resume_photo_message() -> None:
     handler._watcher.state = WatcherState.PAUSED
     update = _make_update(callback_data="resume", is_photo=True)
     await handler.handle_callback(update, None)
+    await _confirm_resume(handler)
     printer.resume.assert_called_once()
-    update.callback_query.edit_message_caption.assert_called_once()
+    assert update.callback_query.edit_message_caption.call_count == 2
     assert "resumed" in update.callback_query.edit_message_caption.call_args[1]["caption"].lower()
     update.callback_query.edit_message_text.assert_not_called()
 
@@ -765,8 +828,10 @@ async def test_callback_confirm_stop_photo_message() -> None:
     assert "cancelled" in update.callback_query.edit_message_caption.call_args[1]["caption"].lower()
     update.callback_query.edit_message_text.assert_not_called()
 
+
 async def test_ack_timeout_does_not_discard_controls():
     from telegram.error import TimedOut
+
     for action in ("resume", "stop", "snooze"):
         handler = _make_handler()
         handler._watcher.snooze = AsyncMock()
@@ -784,10 +849,12 @@ async def test_ack_timeout_does_not_discard_controls():
 
 async def test_result_delivery_failure_does_not_report_resume_failure(caplog):
     from telegram.error import TimedOut
+
     handler = _make_handler()
     update = _make_update(callback_data="resume")
     update.callback_query.edit_message_text.side_effect = TimedOut()
     await handler.handle_callback(update, None)
+    await _confirm_resume(handler)
     handler._printer.resume.assert_awaited_once()
     assert "Resume failed via inline keyboard" not in caplog.text
     assert "result delivery failed" in caplog.text
@@ -795,6 +862,7 @@ async def test_result_delivery_failure_does_not_report_resume_failure(caplog):
 
 async def test_status_photo_timeout_falls_back_to_text():
     from telegram.error import TimedOut
+
     handler = _make_handler()
     update = _make_update()
     update.message.reply_photo.side_effect = TimedOut()
@@ -805,6 +873,7 @@ async def test_status_photo_timeout_falls_back_to_text():
 
 async def test_status_total_delivery_failure_is_contained():
     from telegram.error import TimedOut
+
     handler = _make_handler()
     update = _make_update()
     update.message.reply_photo.side_effect = TimedOut()
@@ -814,26 +883,38 @@ async def test_status_total_delivery_failure_is_contained():
 
 async def test_callback_result_delivery_runs_outside_control_handler():
     import asyncio
+
     handler = _make_handler()
     update = _make_update(callback_data="resume")
     context = MagicMock()
     tasks = []
-    context.application.create_task.side_effect = lambda coro: tasks.append(asyncio.create_task(coro))
+
+    def create_task(coro):
+        task = asyncio.create_task(coro)
+        tasks.append(task)
+        return task
+
+    context.application.create_task.side_effect = create_task
     gate = asyncio.Event()
+
     async def edit(*args, **kwargs):
         await gate.wait()
+
     update.callback_query.edit_message_text.side_effect = edit
     await asyncio.wait_for(handler.handle_callback(update, context), timeout=0.5)
     handler._printer.resume.assert_awaited_once()
     assert len(tasks) == 1
     gate.set()
+    await _confirm_resume(handler)
     await asyncio.gather(*tasks)
 
 
-async def test_group_status_uses_addressed_keyboard():
+async def test_group_status_uses_addressed_command_keyboard():
     handler = _make_handler()
     update = _make_update(chat_id=-12345)
-    handler._notifier.is_authorized.side_effect = lambda cid, uid: cid == -12345 and uid == _AUTHORIZED_USER
+    handler._notifier.is_authorized.side_effect = lambda cid, uid: (
+        cid == -12345 and uid == _AUTHORIZED_USER
+    )
     update.effective_chat.type = "group"
     update.get_bot.return_value.username = "ArdoSentinelBot"
     await handler.cmd_status(update, None)
@@ -843,15 +924,20 @@ async def test_group_status_uses_addressed_keyboard():
     assert markup.keyboard[0][1].text == "/snapshot@ArdoSentinelBot"
 
 
-async def test_group_snapshot_uses_addressed_keyboard():
+async def test_group_snapshot_uses_addressed_command_keyboard():
     handler = _make_handler()
     update = _make_update(chat_id=-12345)
-    handler._notifier.is_authorized.side_effect = lambda cid, uid: cid == -12345 and uid == _AUTHORIZED_USER
+    handler._notifier.is_authorized.side_effect = lambda cid, uid: (
+        cid == -12345 and uid == _AUTHORIZED_USER
+    )
     update.effective_chat.type = "supergroup"
     update.get_bot.return_value.username = "ArdoSentinelBot"
     await handler.cmd_snapshot(update, None)
     update.message.reply_photo.assert_awaited_once()
-    assert update.message.reply_photo.await_args.kwargs["reply_markup"].keyboard[0][0].text == "/status@ArdoSentinelBot"
+    assert (
+        update.message.reply_photo.await_args.kwargs["reply_markup"].keyboard[0][0].text
+        == "/status@ArdoSentinelBot"
+    )
 
 
 async def test_group_unlisted_user_remains_denied():
@@ -868,4 +954,48 @@ async def test_private_keyboard_remains_unchanged():
     update = _make_update()
     update.effective_chat.type = "private"
     await handler.cmd_status(update, None)
-    assert update.message.reply_photo.await_args.kwargs["reply_markup"].keyboard[0][0].text == "📊 Status"
+    assert (
+        update.message.reply_photo.await_args.kwargs["reply_markup"].keyboard[0][0].text
+        == "📊 Status"
+    )
+
+
+@pytest.mark.parametrize("callback", [None, "detection_menu", "resume"])
+async def test_explicit_family_group_policy_accepts_non_allowlisted_user(callback):
+    handler = _make_handler()
+    handler._settings.telegram_chat_ids = "-12345"
+    handler._settings.telegram_group_control_chat_ids = "-12345"
+    update = _make_update(user_id=_OTHER_USER, chat_id=-12345, callback_data=callback)
+    update.effective_chat.type = "group"
+    if callback:
+        update.callback_query.from_user.is_bot = False
+    else:
+        update.message.from_user.is_bot = False
+        update.message.sender_chat = None
+    assert handler._authorized(update) is True
+
+
+@pytest.mark.parametrize(
+    "case", ["private", "other_group", "unconfigured", "bot", "anonymous", "disabled"]
+)
+async def test_family_group_policy_stays_scoped(case):
+    handler = _make_handler()
+    handler._settings.telegram_chat_ids = "-12345"
+    handler._settings.telegram_group_control_chat_ids = "-12345"
+    update = _make_update(user_id=_OTHER_USER, chat_id=-12345)
+    update.effective_chat.type = "group"
+    update.message.from_user.is_bot = False
+    update.message.sender_chat = None
+    if case == "private":
+        update.effective_chat.type = "private"
+    elif case == "other_group":
+        update.message.chat_id = -99999
+    elif case == "unconfigured":
+        handler._settings.telegram_chat_ids = "-99999"
+    elif case == "bot":
+        update.message.from_user.is_bot = True
+    elif case == "anonymous":
+        update.message.sender_chat = MagicMock()
+    else:
+        handler._settings.telegram_group_control_chat_ids = None
+    assert handler._authorized(update) is False

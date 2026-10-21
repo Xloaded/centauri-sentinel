@@ -132,6 +132,7 @@ class Settings(BaseSettings):
     telegram_chat_id: str | None = None
     telegram_chat_ids: str | None = None
     telegram_user_ids: str | None = None
+    telegram_group_control_chat_ids: str | None = None
     telegram_send_snapshots: bool = False
 
     # ntfy
