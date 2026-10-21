@@ -29,6 +29,7 @@ from sentinel.camera.errors import CameraOfflineError
 from sentinel.ml.types import LastMlObservation
 from sentinel.printer.errors import PauseDebouncedError
 from sentinel.printer.exceptions import exception_name
+from sentinel.printer.resume import ResumeCoordinator
 from sentinel.watcher.state import WatcherState
 
 if TYPE_CHECKING:
@@ -77,6 +78,7 @@ class WatcherLoop:
     ) -> None:
         self._settings = settings
         self._printer = printer
+        self.resume_control = ResumeCoordinator(printer)
         self._camera = camera
         self._ml = ml
         self._db = db
@@ -99,6 +101,7 @@ class WatcherLoop:
         self._last_heartbeat_time = 0.0
         self._last_heartbeat_state: WatcherState | None = None
         self._last_progress_status_time = 0.0
+        self._resume_progress_pending = False
         self._active_exception_codes: set[int] = set()
         self._snooze_task: asyncio.Task[None] | None = None
         self._tick_lock = asyncio.Lock()
@@ -206,6 +209,7 @@ class WatcherLoop:
                 tg.create_task(self._periodic_cleanup())
         finally:
             self.cancel_snooze()
+            await self.resume_control.close()
 
     async def tick(self) -> None:
         """Run one iteration of the detection loop (useful for tests)."""
@@ -424,16 +428,17 @@ class WatcherLoop:
                 and self._alerted_new_print
                 and bool(printer_status.filename)
                 and getattr(printer_status, "total_layers", 0) > 0
-                and self.state in (
+                and self.state
+                in (
                     WatcherState.WARMUP,
                     WatcherState.ARMED,
                     WatcherState.CAMERA_OFFLINE,
                 )
-                and now_mono - self._last_resume_time >= resume_cooldown_s
+                and (self._resume_progress_pending or now_mono - self._last_resume_time >= resume_cooldown_s)
             )
 
             if progress_status_allowed:
-                if now_mono - self._last_progress_status_time >= 60:
+                if self._resume_progress_pending or now_mono - self._last_progress_status_time >= 60:
                     progress_jpeg = await self._safe_grab_jpeg()
 
                     detection_enabled = await self._db.get_setting(
@@ -448,18 +453,28 @@ class WatcherLoop:
                             "ts_utc": self.last_ml_observation.ts.isoformat(),
                         }
 
+                    try:
+                        snooze_until = float(
+                            await self._db.get_setting("snooze_until_utc", "0") or "0"
+                        )
+                    except (TypeError, ValueError):
+                        snooze_until = 0.0
                     progress_caption = format_status_caption(
                         printer_status,
                         watcher_state=self.state.name,
                         detection_enabled=(detection_enabled == "true"),
                         last_detection=last_detection,
+                        snooze_until=snooze_until,
                     )
 
+                    extra = {"force": True, "new_card": True} if self._resume_progress_pending else {}
                     self._dispatcher.dispatch_print_progress(
                         printer_status,
                         jpeg=progress_jpeg,
                         caption=progress_caption,
+                        **extra,
                     )
+                    self._resume_progress_pending = False
                     self._last_progress_status_time = now_mono
 
             self.last_printer_status = copy.copy(printer_status)
@@ -484,14 +499,22 @@ class WatcherLoop:
         return "failed"
 
     async def _update_state(self, status: PrinterStatus) -> None:
+        self.resume_control.observe(status)
+        op = self.resume_control.operation
+        if op is not None and op.result.done() and op.result.result() and not op.confirmation_dispatched:
+            op.confirmation_dispatched = True
+            self._resume_progress_pending = True
+            self._dispatcher.dispatch_resume_confirmed(
+                "Print resumed — confirmed by printer.", frozenset(op.origin_chat_ids)
+            )
+            logger.info("Confirmed resume dispatched to configured notification destinations")
         if not getattr(status, "stale", False):
             current_exceptions = set(getattr(status, "exception_codes", []))
             new_exceptions = current_exceptions - self._active_exception_codes
 
             for code in sorted(new_exceptions):
                 self._dispatcher.dispatch_text(
-                    f"⚠️ Printer Error\n"
-                    f"⚠️ {exception_name(code)} ({code})"
+                    f"⚠️ Printer Error\n⚠️ {exception_name(code)} ({code})"
                 )
 
             self._active_exception_codes = current_exceptions
@@ -560,7 +583,6 @@ class WatcherLoop:
             self._last_progress_status_time = 0.0
             return
 
-
         if self._print_start is None:
             self._print_start = datetime.now(tz=UTC)
 
@@ -573,11 +595,7 @@ class WatcherLoop:
 
         # FW02 may report printing before file details arrive. Adopt the
         # filename when it becomes available instead of treating it as a new job.
-        if (
-            self._current_job_id is not None
-            and not self._current_filename
-            and status.filename
-        ):
+        if self._current_job_id is not None and not self._current_filename and status.filename:
             self._current_filename = status.filename
 
         # Handle back-to-back print job transitions (filename changed while printing)
@@ -694,6 +712,13 @@ class WatcherLoop:
                     self._paused_since is not None
                     and (datetime.now(tz=UTC) - self._paused_since).total_seconds() > 5.0
                 ):
+                    pause_age = (datetime.now(tz=UTC) - self._paused_since).total_seconds()
+                    received_after_pause = (
+                        status.received_at_monotonic > time.monotonic() - pause_age
+                    )
+                    if received_after_pause and not self.resume_control.covers(status):
+                        self._resume_progress_pending = True
+                        self._dispatcher.dispatch_text("Print resumed — confirmed by printer.")
                     logger.info("Printer resumed externally — transitioning ARMED")
                     self.state = WatcherState.ARMED
             elif self.state != WatcherState.PAUSED:

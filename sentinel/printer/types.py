@@ -65,6 +65,9 @@ class PrinterStatus:
     # Set to True if the status was preserved due to a network timeout
     stale: bool = False
 
+    # Receipt time of the latest MQTT packet explicitly containing print state.
+    received_at_monotonic: float = field(default=0.0, compare=False)
+
 
 # MQTT method codes (verified from spike, method 6000 = status push)
 METHOD_STATUS_PUSH = 6000

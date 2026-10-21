@@ -162,6 +162,20 @@ class NotificationDispatcher:
 
             self._fire_and_forget(self._with_retry(_call, channel_name))
 
+    def dispatch_resume_confirmed(self, text: str, origin_chat_ids: frozenset[str]) -> None:
+        """Broadcast a confirmed action without duplicating direct Telegram replies."""
+        for notifier in self._notifiers:
+            channel_name = type(notifier).__name__.replace("Notifier", "")
+
+            async def _call(n: Notifier = notifier) -> None:
+                send_resume = getattr(n, "send_resume_confirmed", None)
+                if send_resume is not None:
+                    await send_resume(text, origin_chat_ids)
+                else:
+                    await n.send_text(text)
+
+            self._fire_and_forget(self._with_retry(_call, channel_name))
+
     def dispatch_print_started(self, filename: str | None, jpeg: bytes | None = None) -> None:
         for n in self._notifiers:
             channel_name = type(n).__name__.replace("Notifier", "")
@@ -178,6 +192,7 @@ class NotificationDispatcher:
         jpeg: bytes | None = None,
         caption: str | None = None,
         force: bool = False,
+        new_card: bool = False,
     ) -> None:
         """Update print progress on notifiers that support progress messages."""
         for notifier in self._notifiers:
@@ -189,6 +204,7 @@ class NotificationDispatcher:
                         jpeg=jpeg,
                         caption=caption,
                         force=force,
+                        **({"new_card": True} if new_card else {}),
                     ),
                     critical=False,
                 )

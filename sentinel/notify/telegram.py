@@ -15,9 +15,11 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import tenacity
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Bot
 from telegram.error import NetworkError, RetryAfter, TimedOut
 from telegram.request import HTTPXRequest
+
+from sentinel.bot.keyboards import print_keyboard
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -56,8 +58,9 @@ class TelegramNotifier:
             token=settings.telegram_bot_token.get_secret_value()
             if settings.telegram_bot_token
             else "",
-            request=HTTPXRequest(connect_timeout=10, read_timeout=10,
-                                 write_timeout=10, media_write_timeout=30),
+            request=HTTPXRequest(
+                connect_timeout=10, read_timeout=10, write_timeout=10, media_write_timeout=30
+            ),
         )
         chat_ids: list[str] = []
         if settings.telegram_chat_id and settings.telegram_chat_id.strip():
@@ -106,15 +109,7 @@ class TelegramNotifier:
                 except OSError:
                     logger.exception("Failed to read snapshot file for Telegram: %s", p)
 
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("Resume", callback_data="resume"),
-                    InlineKeyboardButton("Stop", callback_data="stop"),
-                    InlineKeyboardButton("Snooze 10m", callback_data="snooze"),
-                ]
-            ]
-        )
+        keyboard = print_keyboard()
 
         caption = (
             f"⚠️ Failure detected — confidence {score:.0%}\n"
@@ -124,6 +119,7 @@ class TelegramNotifier:
 
         errors: list[Exception] = []
         for chat_id in self._chat_ids:
+
             async def _send(chat_id: str = chat_id) -> None:
                 if photo_bytes and self._settings.telegram_send_snapshots:
                     try:
@@ -170,6 +166,7 @@ class TelegramNotifier:
 
         errors: list[Exception] = []
         for chat_id in self._chat_ids:
+
             async def _send(chat_id: str = chat_id) -> None:
                 await self._bot.send_message(
                     chat_id=chat_id,
@@ -193,6 +190,7 @@ class TelegramNotifier:
 
         errors: list[Exception] = []
         for chat_id in self._chat_ids:
+
             async def _send(chat_id: str = chat_id) -> None:
                 await self._bot.send_message(
                     chat_id=chat_id,
@@ -210,12 +208,19 @@ class TelegramNotifier:
         if errors:
             raise errors[0]
 
-    async def send_text(self, text: str) -> None:
+    async def send_resume_confirmed(self, text: str, origin_chat_ids: frozenset[str]) -> None:
+        """Notify configured chats other than those receiving a direct command result."""
+        await self.send_text(text, exclude_chat_ids=origin_chat_ids)
+
+    async def send_text(self, text: str, *, exclude_chat_ids: frozenset[str] = frozenset()) -> None:
         if not self._enabled:
             return
 
         errors: list[Exception] = []
         for chat_id in self._chat_ids:
+            if chat_id in exclude_chat_ids:
+                continue
+
             async def _send(chat_id: str = chat_id) -> None:
                 await self._bot.send_message(
                     chat_id=chat_id,
@@ -235,7 +240,6 @@ class TelegramNotifier:
 
     async def _send_with_retry_fn(self, fn: Callable[[], Awaitable[None]]) -> None:
         from datetime import timedelta
-
 
         _default_wait = tenacity.wait_exponential(multiplier=0.5, min=0.5, max=8)
 
@@ -288,11 +292,7 @@ class TelegramNotifier:
         elapsed = max(0.0, float(status.elapsed_seconds or 0.0))
 
         now = datetime.now(ZoneInfo("Europe/Tallinn"))
-        eta = (
-            (now + timedelta(seconds=remaining)).strftime("%H:%M")
-            if remaining > 0
-            else "—"
-        )
+        eta = (now + timedelta(seconds=remaining)).strftime("%H:%M") if remaining > 0 else "—"
 
         return "\n".join(
             [
@@ -315,6 +315,7 @@ class TelegramNotifier:
         jpeg: bytes | None = None,
         caption: str | None = None,
         force: bool = False,
+        new_card: bool = False,
     ) -> None:
         """Create or update one live Telegram status card."""
         if not self._enabled:
@@ -330,7 +331,7 @@ class TelegramNotifier:
             self._progress_milestone = 0
 
         if (
-            not force
+            not (force or new_card)
             and self._progress_message_ids
             and now_mono - self._progress_last_update < 60
         ):
@@ -350,8 +351,7 @@ class TelegramNotifier:
         for chat_id in self._chat_ids:
             old_message_id = self._progress_message_ids.get(chat_id)
             refresh_card = (
-                old_message_id is None
-                or milestone > self._progress_milestone
+                new_card or old_message_id is None or milestone > self._progress_milestone
             )
 
             try:
@@ -432,6 +432,7 @@ class TelegramNotifier:
 
         errors: list[Exception] = []
         for chat_id in self._chat_ids:
+
             async def _send(chat_id: str = chat_id) -> None:
                 if jpeg and self._settings.telegram_send_snapshots:
                     try:
@@ -480,6 +481,7 @@ class TelegramNotifier:
 
         errors: list[Exception] = []
         for chat_id in self._chat_ids:
+
             async def _send(chat_id: str = chat_id) -> None:
                 if jpeg and self._settings.telegram_send_snapshots:
                     try:
@@ -520,10 +522,11 @@ class TelegramNotifier:
         if not self._enabled:
             return
 
-        caption = "⏸️ Printer paused externally (possible filament runout or manual pause)."
+        caption = "⏸️ Print paused — confirmed by printer."
 
         errors: list[Exception] = []
         for chat_id in self._chat_ids:
+
             async def _send(chat_id: str = chat_id) -> None:
                 if jpeg and self._settings.telegram_send_snapshots:
                     try:

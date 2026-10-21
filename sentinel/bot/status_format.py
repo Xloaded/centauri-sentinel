@@ -1,6 +1,7 @@
 """Shared formatting for Telegram printer status."""
 
 from datetime import datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sentinel.printer.exceptions import exception_name
@@ -12,7 +13,8 @@ def format_status_caption(
     *,
     watcher_state: str,
     detection_enabled: bool,
-    last_detection=None,
+    last_detection: dict[str, Any] | None = None,
+    snooze_until: float = 0.0,
 ) -> str:
     printer_state = "Offline"
     print_elapsed = "—"
@@ -27,9 +29,7 @@ def format_status_caption(
     total_layers = 0
 
     if status:
-        print_state = status.print_state or (
-            "printing" if status.printing else "idle"
-        )
+        print_state = status.print_state or ("printing" if status.printing else "idle")
         if status.stale:
             print_state = "offline (stale data)"
 
@@ -40,11 +40,7 @@ def format_status_caption(
             elapsed_seconds = max(0, int(status.elapsed_seconds))
             eh, er = divmod(elapsed_seconds, 3600)
             em, es = divmod(er, 60)
-            print_elapsed = (
-                f"{eh}h {em}m {es}s"
-                if eh
-                else f"{em}m {es}s"
-            )
+            print_elapsed = f"{eh}h {em}m {es}s" if eh else f"{em}m {es}s"
 
         extruder_temp = status.extruder_temp
         extruder_target = status.extruder_target
@@ -56,22 +52,14 @@ def format_status_caption(
         current_layer = status.current_layer
         total_layers = status.total_layers
 
-    exception_codes = (
-        getattr(status, "exception_codes", [])
-        if status
-        else []
-    )
+    exception_codes = getattr(status, "exception_codes", []) if status else []
 
     time_rem = "—"
     if remaining_seconds > 0:
         hours = int(remaining_seconds // 3600)
         minutes = int((remaining_seconds % 3600) // 60)
         secs = int(remaining_seconds % 60)
-        time_rem = (
-            f"{hours}h {minutes}m {secs}s"
-            if hours > 0
-            else f"{minutes}m {secs}s"
-        )
+        time_rem = f"{hours}h {minutes}m {secs}s" if hours > 0 else f"{minutes}m {secs}s"
 
     ext_str = (
         f"{extruder_temp:.1f}°C / {extruder_target:.0f}°C"
@@ -96,13 +84,20 @@ def format_status_caption(
         else "—"
     )
 
+    import time
+
+    detection_label = "enabled" if detection_enabled else "disabled"
+    if not detection_enabled and snooze_until > time.time():
+        minutes = max(1, int((snooze_until - time.time() + 59) // 60))
+        detection_label = f"paused ({minutes} min remaining)"
+
     lines = [
         f"📊 {progress:.1f}%",
         progress_bar,
         f"📐 Layer {current_layer} / {total_layers}",
         "",
         f"👁️ Watcher: {watcher_state}",
-        f"⚙️ Detection: {'enabled' if detection_enabled else 'disabled'}",
+        f"⚙️ Detection: {detection_label}",
         f"🖨️ Printer: {printer_state}",
         "",
         f"📄 {filename}",
@@ -117,25 +112,24 @@ def format_status_caption(
         for code in exception_codes:
             lines.append(f"• {exception_name(code)} ({code})")
 
-    lines.extend([
-        "",
-        f"🔥 Extruder: {ext_str}",
-        f"🛏️ Bed: {bed_str}",
-    ])
+    lines.extend(
+        [
+            "",
+            f"🔥 Extruder: {ext_str}",
+            f"🛏️ Bed: {bed_str}",
+        ]
+    )
 
     if last_detection:
         detection_time = last_detection["ts_utc"]
         try:
-            detection_dt = datetime.fromisoformat(
-                detection_time.replace("Z", "+00:00")
-            ).astimezone(ZoneInfo("Europe/Tallinn"))
+            detection_dt = datetime.fromisoformat(detection_time.replace("Z", "+00:00")).astimezone(
+                ZoneInfo("Europe/Tallinn")
+            )
             detection_time = detection_dt.strftime("%H:%M")
         except (ValueError, TypeError):
             pass
 
-        lines.append(
-            f"⚠️ Last detection: score={last_detection['score']:.2f} "
-            f"at {detection_time}"
-        )
+        lines.append(f"⚠️ Last detection: score={last_detection['score']:.2f} at {detection_time}")
 
     return "\n".join(lines)

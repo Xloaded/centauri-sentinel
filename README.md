@@ -245,6 +245,7 @@ Disabled if `TELEGRAM_BOT_TOKEN` is unset.
 | `TELEGRAM_CHAT_ID` | — | Primary/legacy destination chat ID |
 | `TELEGRAM_CHAT_IDS` | — | Optional comma-separated additional destination chat/group IDs |
 | `TELEGRAM_USER_IDS` | — | Comma-separated list of authorised user IDs |
+| `TELEGRAM_GROUP_CONTROL_CHAT_IDS` | — | Opt-in trusted group IDs; human participants may control the printer within these configured groups without individual user allowlisting |
 | `TELEGRAM_SEND_SNAPSHOTS` | `false` | Set `true` to upload camera snapshots to Telegram with each alert (opt-in; see Privacy Notice below) |
 
 See [Telegram setup](#telegram-setup) below.
@@ -465,3 +466,9 @@ See [Telegram reliability](TELEGRAM_RELIABILITY.md),
 [deployment and investigation record](INVESTIGATION_FIXES.md) for regression
 coverage, deployed versus undeployed changes, Snooze recovery findings, and
 configuration-preserving deployment/rollback considerations.
+
+### Trusted family-group control without bot administrator privileges
+
+`TELEGRAM_GROUP_CONTROL_CHAT_IDS` is disabled by default. Set it only for a trusted private group already listed in `TELEGRAM_CHAT_ID` or `TELEGRAM_CHAT_IDS`. This authorizes human participants interacting in that group, including future participants, for commands and callbacks. It does not add them to the global user allowlist or grant private-chat access. Anonymous sender-chat messages and bot identities do not receive this group-based permission. Existing allowlisted access is preserved.
+
+With Telegram privacy enabled and ordinary bot membership, send explicitly addressed commands such as `/status@YourBot`, `/snapshot@YourBot`, `/pause@YourBot`, `/resume@YourBot`, `/stop@YourBot` and `/detection@YourBot`. Plain text reply-keyboard labels can still be filtered by Telegram. The bottom keyboard is retained; no message-attached group menu is installed. Stop confirmation and per-user rate limits remain active.

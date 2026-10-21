@@ -2629,3 +2629,25 @@ async def test_startup_expired_snooze_vs_explicit_disable(snooze_until, expected
         with pytest.raises(asyncio.CancelledError):
             await task
         await db.close()
+
+
+async def test_confirmed_resume_immediately_publishes_new_live_status_card():
+    import time
+    from dataclasses import replace
+
+    observed = replace(_printing_status(), progress=7, received_at_monotonic=time.monotonic())
+    watcher, printer, *_ = await _make_watcher(printer_status=observed)
+    await watcher.tick()
+    watcher._dispatcher.dispatch_print_progress.reset_mock()
+    watcher._alerted_new_print = True
+    watcher._last_progress_status_time = time.monotonic()
+    watcher._resume_progress_pending = True
+    watcher._last_resume_time = time.monotonic()
+    await watcher.tick()
+    call = watcher._dispatcher.dispatch_print_progress.call_args
+    assert call.kwargs["new_card"] is True
+    assert call.kwargs["force"] is True
+    assert watcher._resume_progress_pending is False
+    watcher._dispatcher.dispatch_print_progress.reset_mock()
+    await watcher.tick()
+    watcher._dispatcher.dispatch_print_progress.assert_not_called()

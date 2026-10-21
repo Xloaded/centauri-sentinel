@@ -602,10 +602,11 @@ async def test_multi_chat_progress_uses_separate_message_ids() -> None:
     }
 
     assert mock_bot.send_photo.await_count == 3
-    assert [
-        call.kwargs["chat_id"]
-        for call in mock_bot.send_photo.await_args_list
-    ] == ["99", "100", "101"]
+    assert [call.kwargs["chat_id"] for call in mock_bot.send_photo.await_args_list] == [
+        "99",
+        "100",
+        "101",
+    ]
 
 
 async def test_multi_chat_progress_edits_each_chat_message() -> None:
@@ -654,14 +655,51 @@ async def test_progress_failure_does_not_start_throttle() -> None:
 
     assert notifier._progress_last_update == 0.0
 
+
 async def test_failed_chat_does_not_prevent_later_alerts():
     from telegram.error import Forbidden
+
     notifier, bot = _make_notifier_multi_chat()
+
     async def send(**kwargs):
         if kwargs["chat_id"] == "99":
             raise Forbidden("blocked")
+
     bot.send_message.side_effect = send
     import pytest
+
     with pytest.raises(Forbidden):
         await notifier.send_text("test")
     assert [c.kwargs["chat_id"] for c in bot.send_message.await_args_list] == ["99", "100", "101"]
+
+
+@pytest.mark.parametrize(
+    "origins,expected", [({"99"}, {"-100123"}), ({"-100123"}, {"99"}), ({"99", "-100123"}, set())]
+)
+async def test_resume_confirmation_reaches_other_chats_only(origins, expected):
+    notifier, bot = _make_notifier_enabled()
+    notifier._chat_ids = ["99", "-100123"]
+    await notifier.send_resume_confirmed("Print resumed.", frozenset(origins))
+    assert {call.kwargs["chat_id"] for call in bot.send_message.await_args_list} == expected
+    assert bot.send_message.await_count == len(expected)
+
+
+async def test_observed_pause_does_not_invent_an_external_cause():
+    notifier, bot = _make_notifier_enabled()
+    await notifier.send_external_pause_alert()
+    assert bot.send_message.call_args.kwargs["text"] == "⏸️ Print paused — confirmed by printer."
+
+
+async def test_resume_creates_new_card_before_milestone_then_edits_it():
+    notifier, bot = _make_notifier_enabled()
+    from unittest.mock import MagicMock
+
+    bot.send_photo.side_effect = [MagicMock(message_id=123), MagicMock(message_id=456)]
+    await notifier.send_print_progress(_progress_status(7), jpeg=b"jpeg", force=True)
+    await notifier.send_print_progress(_progress_status(7), jpeg=b"jpeg", new_card=True)
+    assert bot.send_photo.await_count == 2
+    assert notifier._progress_message_ids["99"] == 456
+    bot.delete_message.assert_awaited_once_with(chat_id="99", message_id=123)
+    await notifier.send_print_progress(_progress_status(8), jpeg=b"jpeg", force=True)
+    assert bot.edit_message_media.await_args.kwargs["message_id"] == 456
+    assert bot.send_photo.await_count == 2
